@@ -1,0 +1,80 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import express from 'express';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createDemoStore } from './store.js';
+import { createDemoMonitoringRouter } from './router.js';
+
+test('demo creates, updates and persists tasks/history with host identity', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'sysmon-demo-'));
+  const file = join(dir, 'demo.json');
+  const store = await createDemoStore(file);
+  const app = express();
+  app.use((req, res, next) => { req.user = { userId: 'test-host-user' }; next(); });
+  app.use(createDemoMonitoringRouter(store));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(async () => { await new Promise(resolve => server.close(resolve)); await rm(dir, { recursive: true, force: true }); });
+  const request = (path, method = 'GET', body) => fetch(`http://127.0.0.1:${server.address().port}${path}`, { method,
+    headers: { 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const task = { title: 'Persist a demo task', reference: 'T-155441', taskNumber:'BUG-9999', system: 'WMS', description: 'Acceptance example', notes: 'Created',
+    type: 'Bug', status: 'Open', priority: 'High', developerId: 'demo-alex', testerId: 'demo-sam', dueDate: '2026-10-30', estimateHours: 2,
+    createdBy: 'forged-client-user' };
+  const created = await request('/tasks', 'POST', task);
+  assert.equal(created.status, 201);
+  assert.equal(created.headers.get('X-System-Monitoring-Mode'), 'demo');
+  const { id } = await created.json();
+  const listed = await (await request('/tasks')).json();
+  assert.equal(listed.find(task=>task.id===id).taskNumber,`BUG-${String(id).padStart(4,'0')}`);
+  assert.equal(listed.find(task=>task.id===id).reference,'T-155441');
+  assert.equal((await request(`/tasks/${id}`, 'PUT', { ...task, status: 'Closed', notes: 'Tested' })).status, 200);
+  assert.equal((await request('/tasks', 'POST', { ...task, testerId: 'unknown-person' })).status, 400);
+  assert.equal((await request('/tasks', 'POST', { ...task, dueDate: '2026-02-30' })).status, 400);
+  assert.equal((await request('/tasks/999999', 'PUT', task)).status, 404);
+  const reloaded = await createDemoStore(file);
+  const saved = reloaded.snapshot().tasks.find(item => item.id === id);
+  assert.equal(saved.createdBy, 'test-host-user');
+  assert.equal(saved.status, 'Closed');
+  assert.ok(saved.completedAt);
+  const history = await (await request(`/tasks/${id}/history`)).json();
+  assert.equal(history.length, 2);
+  assert.equal(history[0].notes, 'Tested');
+  assert.equal(reloaded.snapshot().history.filter(item => item.taskId === id).length, 2);
+});
+
+test('status patch preserves task fields; production events and linked reverts persist', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'sysmon-calendar-'));
+  const file = join(dir,'db.json'), store = await createDemoStore(file);
+  const original = store.snapshot().tasks[0];
+  const app=express();
+  app.use((req,res,next)=>{req.user={userId:'host-release-manager'};next();});
+  app.use(createDemoMonitoringRouter(store));
+  const server=app.listen(0,'127.0.0.1');
+  await new Promise(resolve=>server.once('listening',resolve));
+  t.after(async()=>{await new Promise(resolve=>server.close(resolve));await rm(dir,{recursive:true,force:true});});
+  const request=(path,method='GET',body)=>fetch(`http://127.0.0.1:${server.address().port}${path}`,{method,headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+  assert.equal((await request('/tasks/1/status','PATCH',{status:'Prod live',title:'FORGED'})).status,200);
+  const live=store.snapshot().tasks[0];
+  assert.equal(live.title,original.title);assert.equal(live.notes,original.notes);assert.ok(live.completedAt);
+  assert.equal((await request('/tasks/1/status','PATCH',{status:'In progress'})).status,200);
+  assert.equal(store.snapshot().tasks[0].completedAt,null);
+  assert.equal((await request('/tasks/1/status','PATCH',{status:'unknown'})).status,400);
+  const event={taskId:1,action:'Fix',version:'demo-v1',notes:'Production fix deployed',occurredAt:'2026-10-22T02:00:00.000Z',actorId:'forged'};
+  const created=await request('/deployments','POST',event);
+  assert.equal(created.status,201);const {id}=await created.json();
+  const revert={...event,action:'Revert',version:'demo-v0',notes:'Restored prior release after regression',revertsId:id,occurredAt:'2026-10-22T03:00:00.000Z'};
+  assert.equal((await request('/deployments','POST',{...revert,occurredAt:'2026-10-22T01:00:00.000Z'})).status,409);
+  assert.equal((await request('/deployments','POST',{...revert,taskId:2})).status,409);
+  assert.equal((await request('/deployments','POST',revert)).status,201);
+  assert.equal((await request('/deployments','POST',revert)).status,409);
+  assert.equal((await request('/deployments','POST',{...event,taskId:999999})).status,404);
+  assert.equal((await request('/deployments','POST',{...event,notes:''})).status,400);
+  const events=await(await request('/deployments')).json();
+  assert.equal(events.length,2);assert.equal(events[0].revertsId,id);
+  assert.ok(events.every(row=>row.actorId==='host-release-manager'));
+  assert.equal(store.snapshot().tasks[0].status,'In progress');
+  const reopened=await createDemoStore(file);
+  assert.equal(reopened.snapshot().deployments.length,2);
+});

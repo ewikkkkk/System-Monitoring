@@ -1,17 +1,42 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Activity, Plus, Search, RefreshCw, ChevronDown, ChevronRight, X, Bug, Sparkles, CheckCircle2, Clock3, AlertCircle, ListFilter } from 'lucide-react';
-import { getTasks, getPeople, saveTask, getTaskHistory } from './services/api.js';
+import React, { useEffect, useState } from 'react';
+import { AlertCircle } from 'lucide-react';
+import { getTasks, getPeople, changeTaskStatus, saveTask, getTaskHistory, isMonitoringDemo, getHelpDeskTicketPreview } from './services/api.js';
 import './system-monitoring.css';
+import OverviewView from './views/OverviewView.jsx';
+import ListView from './views/ListView.jsx';
+import TaskModal from './components/TaskModal.jsx';
+import ModuleSidebar from './components/ModuleSidebar.jsx';
+import TaskDetailView from './views/TaskDetailView.jsx';
+import CalendarView from './views/CalendarView.jsx';
+import TaskToolbar from './components/TaskToolbar.jsx';
+import { blankTask as blank, isComplete, taskReference } from './task-utils.js';
+import HelpDeskTicketPage from './views/HelpDeskTicketPage.jsx';
 
-const statuses = ['Open', 'In progress', 'In testing', 'Ready for release', 'Prod live', 'Closed'];
-const blank = { title: '', reference: '', system: '', type: 'Bug', status: 'Open', priority: 'Normal', developerId: '', testerId: '', dueDate: '', estimateHours: '', description: '', notes: '' };
-const date = value => value ? new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(value)) : '—';
-export default function SystemMonitoringPage({ darkMode = false, onToggleDarkMode, onToggleSidebar }) {
+export default function SystemMonitoringPage(props) {
+  const reference = getHelpDeskTicketPreview();
+  return reference !== null ? <HelpDeskTicketPage reference={reference} darkMode={props.darkMode} /> : <MonitoringWorkspace {...props}/>;
+}
+
+function MonitoringWorkspace({ darkMode = false, onToggleDarkMode, onToggleSidebar }) {
   const [tasks, setTasks] = useState([]), [people, setPeople] = useState([]), [loading, setLoading] = useState(true), [error, setError] = useState('');
-  const [search, setSearch] = useState(''), [type, setType] = useState(''), [person, setPerson] = useState(''), [status, setStatus] = useState(''), [collapsed, setCollapsed] = useState({});
+  const [search, setSearch] = useState(''), [type, setType] = useState(''), [person, setPerson] = useState(''), [status, setStatus] = useState('');
   const [editor, setEditor] = useState(null), [history, setHistory] = useState([]), [saving, setSaving] = useState(false), [editorError, setEditorError] = useState('');
-  const pageRef = useRef(null);
-  useEffect(() => { if (editor) pageRef.current?.querySelector('.sysmon-editor')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, [editor?.id, !!editor]);
+  const [view, setView] = useState('overview');
+  const [priority, setPriority] = useState('');
+  const [localTheme, setLocalTheme] = useState(null);
+  const activeDarkMode = onToggleDarkMode ? darkMode : localTheme ?? darkMode;
+  const toggleDarkMode = () => {
+    if (onToggleDarkMode) onToggleDarkMode();
+    else setLocalTheme(!activeDarkMode);
+  };
+  const [selectedId, setSelectedId] = useState(null);
+  const selectedTask = tasks.find(task => task.id === selectedId);
+  const openTask = task => setSelectedId(task.id);
+  const navigate = next => {
+    if (next === 'list' && isComplete({ status })) setStatus('');
+    setView(next); setSelectedId(null);
+  };
+
   async function load() {
     setLoading(true); setError('');
     try { const [t, p] = await Promise.all([getTasks(), getPeople()]); setTasks(t); setPeople(p); }
@@ -26,21 +51,29 @@ export default function SystemMonitoringPage({ darkMode = false, onToggleDarkMod
   function edit(task = blank) { setEditorError(''); setEditor({ ...task, dueDate: task.dueDate?.slice(0, 10) || '', developerId: task.developerId || '', testerId: task.testerId || '', estimateHours: task.estimateHours ?? '' }); }
   async function submit(e) {
     e.preventDefault(); setSaving(true); setEditorError('');
-    try { await saveTask(editor.id, { ...editor, estimateHours: editor.estimateHours === '' ? null : Number(editor.estimateHours) }); setEditor(null); await load(); }
+    try { const saved = await saveTask(editor.id, { ...editor, estimateHours: editor.estimateHours === '' ? null : Number(editor.estimateHours) }); setEditor(null); setSelectedId(saved.id); await load(); }
     catch (e) { setEditorError(e.message); } finally { setSaving(false); }
   }
-  const filtered = tasks.filter(t => (!type || t.type === type) && (!status || t.status === status) && (!person || t.developerId === person || t.testerId === person) && `${t.title} ${t.reference} ${t.system} ${t.id}`.toLowerCase().includes(search.toLowerCase()));
-  const complete = tasks.filter(t => ['Prod live', 'Closed'].includes(t.status)).length;
-  const overdue = tasks.filter(t => t.dueDate && t.dueDate.slice(0,10) < new Date().toISOString().slice(0,10) && !['Prod live', 'Closed'].includes(t.status)).length;
-  const field = (key, label, input) => <label key={key} className="sysmon-field">{label}{input || <input className="sysmon-input" value={editor[key]} onChange={e => setEditor({ ...editor, [key]: e.target.value })} />}</label>;
-  const selectField = (key, label, values) => field(key, label, <select className="sysmon-input" value={editor[key]} onChange={e => setEditor({ ...editor, [key]: e.target.value })}>{values.map(v => <option key={v} value={v}>{v}</option>)}</select>);
-  return <main ref={pageRef} className={`sysmon-page ${darkMode ? 'sysmon-dark' : ''}`}>
-    <div className="sysmon-heading"><div><div className="sysmon-eyebrow"><Activity size={15} /> DELIVERY OPERATIONS</div><h1 className="sysmon-title">System monitoring</h1><p className="sysmon-subtitle">One place for enhancements, bug fixes, and the people moving them forward.</p></div><button className="sysmon-primary" onClick={() => edit()} disabled={loading || !!error}><Plus size={16} /> New task</button></div>
-    <div className="sysmon-metrics">{[[Activity, 'Active tasks', tasks.length - complete, 'Across development and testing'], [Bug, 'Open bugs', tasks.filter(t => t.type === 'Bug' && !['Prod live','Closed'].includes(t.status)).length, 'Issues still being resolved'], [CheckCircle2, 'Completed', complete, 'Live in production or closed'], [Clock3, 'Overdue', overdue, 'Active tasks past their due date']].map(([Icon, label, count, note]) => <div className="sysmon-metric" key={label}><div className="sysmon-metric-label"><Icon size={16} />{label}</div><strong className="sysmon-number">{loading || error ? '—' : count}</strong><span className="sysmon-muted">{note}</span></div>)}</div>
-    <div className="sysmon-workspace"><div className="sysmon-toolbar"><div className="sysmon-view"><ListFilter size={17} /> Task register <span className="sysmon-count">{error ? '—' : filtered.length}</span></div><button className="sysmon-button" onClick={load} disabled={loading}><RefreshCw size={14} /> Refresh</button></div>
-    <div className="sysmon-filters"><label className="sysmon-search"><Search size={16} /><input className="sysmon-search-input" aria-label="Search tasks" placeholder="Search title, ticket, or system…" value={search} onChange={e => setSearch(e.target.value)} /></label><select className="sysmon-input" aria-label="Task type" value={type} onChange={e => setType(e.target.value)}><option value="">All types</option><option>Bug</option><option>Enhancement</option></select><select className="sysmon-input" aria-label="Assigned person" value={person} onChange={e => setPerson(e.target.value)}><option value="">All assignees</option>{people.map(p => <option key={p.userId} value={p.userId}>{p.displayName}</option>)}</select><select className="sysmon-input" aria-label="Task status" value={status} onChange={e => setStatus(e.target.value)}><option value="">All statuses</option>{statuses.map(s => <option key={s}>{s}</option>)}</select>{(search || type || person || status) && <button className="sysmon-button" onClick={() => { setSearch(''); setType(''); setPerson(''); setStatus(''); }}>Clear</button>}</div>
-    {error ? <div className="sysmon-empty" role="alert"><AlertCircle size={28} /><h2 className="sysmon-empty-title">Database connection needed</h2><p>{error}</p><button className="sysmon-button" onClick={load}>Try again</button></div> : loading ? <div className="sysmon-empty" role="status">Loading task register…</div> : <table className="sysmon-table"><thead className="sysmon-thead"><tr><th className="sysmon-th">Task / system</th><th className="sysmon-th">Developer</th><th className="sysmon-th">Tester</th><th className="sysmon-th">Due date</th><th className="sysmon-th">Priority</th><th className="sysmon-th">Estimate</th><th className="sysmon-th">Updated</th></tr></thead>{statuses.filter(s => !status || status === s).map((s, index) => { const rows = filtered.filter(t => t.status === s); return <tbody key={s}><tr><td colSpan={7} className="sysmon-group"><button className="sysmon-group-button" aria-expanded={!collapsed[s]} onClick={() => setCollapsed({ ...collapsed, [s]: !collapsed[s] })}>{collapsed[s] ? <ChevronRight size={15} /> : <ChevronDown size={15} />}<span className={`sysmon-dot sysmon-status-${index}`} />{s}<span className="sysmon-count">{rows.length}</span></button></td></tr>{!collapsed[s] && (rows.length ? rows.map(t => <tr className="sysmon-row" key={t.id}><td className="sysmon-td"><button className="sysmon-task-button" onClick={() => edit(t)}><span className="sysmon-task-ref">{t.type === 'Bug' ? <Bug size={13} /> : <Sparkles size={13} />}{t.reference || `SM-${String(t.id).padStart(4,'0')}`}</span><span className="sysmon-task-title">{t.title}</span><span className="sysmon-muted">{t.system || 'System not specified'}</span></button></td><td className="sysmon-td">{t.developerName || <span className="sysmon-muted">Unassigned</span>}</td><td className="sysmon-td">{t.testerName || <span className="sysmon-muted">Unassigned</span>}</td><td className="sysmon-td">{date(t.dueDate)}</td><td className="sysmon-td"><span className={`sysmon-priority sysmon-priority-${t.priority.toLowerCase()}`}>{t.priority}</span></td><td className="sysmon-td">{t.estimateHours == null ? '—' : `${t.estimateHours} h`}</td><td className="sysmon-td sysmon-muted">{date(t.updatedAt)}</td></tr>) : <tr><td colSpan={7} className="sysmon-no-tasks">No tasks in this status</td></tr>)}</tbody>; })}</table>}
-    <div className="sysmon-footer">{error ? 'Waiting for SQL Server' : loading ? 'Connecting…' : `${filtered.length} of ${tasks.length} tasks`}<span>Grouped by status · Select a task to view details</span></div></div>
-    {editor && <section className="sysmon-editor" aria-label="Task editor"><div className="sysmon-editor-heading"><div><div className="sysmon-eyebrow">TASK DETAILS</div><h2 className="sysmon-editor-title">{editor.id ? editor.reference || `SM-${editor.id}` : 'Create a task'}</h2></div><button className="sysmon-button" aria-label="Close editor" disabled={saving} onClick={() => setEditor(null)}><X size={18} /></button></div><form className="sysmon-form" onSubmit={submit}>{field('title','Task title',<input className="sysmon-input" required maxLength={240} value={editor.title} onChange={e => setEditor({ ...editor, title: e.target.value })} />)}{field('reference','Ticket reference')}{field('system','System / module')}{selectField('type','Type',['Bug','Enhancement'])}{selectField('status','Status',statuses)}{selectField('priority','Priority',['Low','Normal','High','Urgent'])}{['developer','tester'].map(role => field(`${role}Id`,role === 'developer' ? 'Developer' : 'Tester',<select className="sysmon-input" value={editor[`${role}Id`]} onChange={e => setEditor({ ...editor, [`${role}Id`]: e.target.value })}><option value="">Unassigned</option>{people.filter(p => p.assignmentRole === role || p.assignmentRole === 'both' || p.userId === editor[`${role}Id`]).map(p => <option key={p.userId} value={p.userId}>{p.displayName}</option>)}</select>))}{field('dueDate','Due date',<input className="sysmon-input" type="date" value={editor.dueDate} onChange={e => setEditor({ ...editor, dueDate: e.target.value })} />)}{field('estimateHours','Estimate (hours)',<input className="sysmon-input" type="number" min="0" max="9999" step="0.25" value={editor.estimateHours} onChange={e => setEditor({ ...editor, estimateHours: e.target.value })} />)}{['description','notes'].map(key => field(key,key === 'description' ? 'Description / reproduction steps / acceptance criteria' : 'Progress / testing notes',<textarea className="sysmon-input sysmon-textarea" maxLength={8000} value={editor[key]} onChange={e => setEditor({ ...editor, [key]: e.target.value })} />))}{editorError && <p className="sysmon-form-error" role="alert">{editorError}</p>}<div className="sysmon-form-actions"><button className="sysmon-primary" disabled={saving}>{saving ? 'Saving…' : 'Save task'}</button><button className="sysmon-button" type="button" disabled={saving} onClick={() => setEditor(null)}>Cancel</button></div></form>{editor.id && <div className="sysmon-history"><h3 className="sysmon-editor-title">Progress history</h3>{history.length ? history.map(h => <div className="sysmon-history-item" key={h.id}><strong>{h.status}</strong><span className="sysmon-muted">{date(h.changedAt)} · {h.actorId}</span><p className="sysmon-note">{h.notes || 'No notes added.'}</p></div>) : <p className="sysmon-muted">No history loaded.</p>}</div>}</section>}
+  async function updateTaskStatus(id, status) {
+    const saved = await changeTaskStatus(id, status);
+    setTasks(current => current.map(task => task.id === id ? { ...task, ...saved } : task));
+  }
+  const unfinishedTasks = tasks.filter(task => !isComplete(task));
+  const viewTasks = view === 'list' ? unfinishedTasks : tasks;
+  const filtered = viewTasks.filter(t => (!type || t.type === type) && (!priority || t.priority === priority) && (!status || t.status === status) && (!person || t.developerId === person || t.testerId === person) && `${taskReference(t)} ${t.title} ${t.reference} ${t.system} ${t.id}`.toLowerCase().includes(search.toLowerCase()));
+  return <main className={`sysmon-page sysmon-layout ${activeDarkMode ? 'sysmon-dark' : ''} ${editor ? 'sysmon-modal-open' : ''}`}>
+    <ModuleSidebar view={view} taskOpen={!!selectedTask} taskCount={unfinishedTasks.length} onNavigate={navigate} onCreate={() => edit()} disabled={loading || !!error} darkMode={activeDarkMode} onToggleDarkMode={toggleDarkMode} />
+    <div className="sysmon-content">
+    {isMonitoringDemo() && <div className="sysmon-demo-banner" role="status">Demo workspace · Sample people and tasks · Changes are saved locally</div>}
+    {selectedTask ? <TaskDetailView task={selectedTask} onBack={() => setSelectedId(null)} onEdit={edit} onStatusChange={updateTaskStatus} /> : view === 'calendar' ? <CalendarView tasks={tasks} onOpenTask={openTask} /> : <>
+    <div className="sysmon-workspace"><TaskToolbar view={view} count={filtered.length} people={people} search={search} setSearch={setSearch} type={type} setType={setType} priority={priority} setPriority={setPriority} person={person} setPerson={setPerson} status={status} setStatus={setStatus} onCreate={() => edit()} onRefresh={load} loading={loading} unavailable={!!error} />
+    {error ? <div className="sysmon-empty" role="alert"><AlertCircle size={28} /><h2 className="sysmon-empty-title">Database connection needed</h2><p>{error}</p><button className="sysmon-button" onClick={load}>Try again</button></div> : loading ? <div className="sysmon-empty" role="status">Loading task register…</div> : <section id="sysmon-view-panel" aria-label={`${view} tasks`} tabIndex={0} className="sysmon-view-panel">
+      {view === 'overview' && <OverviewView tasks={filtered} people={people} onEdit={openTask} onSelectStatus={s => { setStatus(s); setView('list'); }} />}
+      {view === 'list' && <ListView tasks={filtered} status={status} onEdit={openTask} />}
+    </section>}
+    <div className="sysmon-footer">{error ? 'Waiting for SQL Server' : loading ? 'Connecting…' : `${filtered.length} of ${viewTasks.length} ${view === 'list' ? 'unfinished tasks' : 'tasks'}`}<span>{view === 'list' ? 'Unfinished concerns only · Completed work remains in Overview and Calendar' : 'Select a task to view details · Filters apply to all views'}</span></div></div>
+    </>}
+    </div>
+    {editor && <TaskModal editor={editor} setEditor={setEditor} history={history} saving={saving} editorError={editorError} submit={submit} people={people} onClose={() => setEditor(null)} />}
   </main>;
 }
