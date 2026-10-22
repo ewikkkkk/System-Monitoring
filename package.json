@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "node server/dev-server.js",
     "build": "vite build",
-    "test": "node --test server/db/pool.test.js server/demo/router.test.js server/demo/vouchers.test.js src/services/voucher-import.test.js src/services/overview-report.test.js src/services/deployment-report.test.js shared/task-number.test.js",
+    "test": "node --test server/db/pool.test.js server/demo/router.test.js server/demo/vouchers.test.js server/demo/bug-occurrences.test.js src/services/bug-trends.test.js src/services/voucher-import.test.js src/services/overview-report.test.js src/services/deployment-report.test.js shared/task-number.test.js",
     "demo": "node server/dev-server.js --demo"
   },
   "dependencies": {

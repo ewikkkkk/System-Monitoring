@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ListFilter, CircleCheck, Users, Search, X, Plus, RefreshCw, Check, ChevronDown } from 'lucide-react';
-import { statuses, unfinishedStatuses } from '../task-utils.js';
+import { statuses } from '../task-utils.js';
 
 export default function TaskToolbar({ view, count, people, search, setSearch, type, setType, priority, setPriority, person, setPerson, status, setStatus, onCreate, onRefresh, loading, unavailable }) {
   const [panel, setPanel] = useState(null), [searchOpen, setSearchOpen] = useState(false);
@@ -8,7 +8,7 @@ export default function TaskToolbar({ view, count, people, search, setSearch, ty
   const triggers = useRef({});
   const selectedPerson = people.find(p => p.userId === person);
   const activeFilters = Number(!!type) + Number(!!priority);
-  const availableStatuses = view === 'list' ? unfinishedStatuses : statuses;
+  const availableStatuses = statuses;
   function closePanel(restoreFocus = false) {
     if (restoreFocus) triggers.current[panel]?.focus();
     setPanel(null);

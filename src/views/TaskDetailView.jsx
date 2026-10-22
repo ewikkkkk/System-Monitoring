@@ -1,13 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Pencil, CircleDot, CalendarDays, Users, UserRoundCheck, Flag, Hourglass, Layers, CheckCircle2, FileText, MessageSquare, History, ChevronDown, ChevronUp, Ticket } from 'lucide-react';
 import ActivityHistoryModal from '../components/ActivityHistoryModal.jsx';
+import BugRecurrences from '../components/BugRecurrences.jsx';
+import { getHelpDeskTicketUrl } from '../services/api.js';
 import { formatDate, taskReference, statuses } from '../task-utils.js';
 
 function Property({ icon: Icon, label, children }) {
   return <div className="sysmon-detail-property"><dt className="sysmon-detail-label"><Icon size={16} />{label}</dt><dd className="sysmon-detail-value">{children}</dd></div>;
 }
 
-export default function TaskDetailView({ task, onBack, onEdit, onStatusChange }) {
+export default function TaskDetailView({ task, onBack, onEdit, onStatusChange, onRefresh }) {
   const [statusSaving, setStatusSaving] = useState(false), [statusFeedback, setStatusFeedback] = useState(''), [statusError, setStatusError] = useState('');
   async function updateStatus(next) {
     if (next === task.status) return;
@@ -31,11 +33,14 @@ export default function TaskDetailView({ task, onBack, onEdit, onStatusChange })
       <Property icon={CalendarDays} label="Due date">{formatDate(task.dueDate)}</Property>
       <Property icon={Flag} label="Priority"><span className={`sysmon-priority sysmon-priority-${task.priority.toLowerCase()}`}>{task.priority}</span></Property>
       <Property icon={Hourglass} label="Time estimate">{task.estimateHours == null ? 'Not estimated' : `${task.estimateHours} hours`}</Property>
-      <Property icon={Layers} label="System / module">{task.system || 'Not specified'}</Property>
+      <Property icon={Layers} label="System">{task.system || 'Not specified'}</Property>
+      <Property icon={FileText} label="Module">{task.moduleName || 'Not specified'}</Property>
       <Property icon={Ticket} label="Help Desk ticket">{task.reference || 'Not linked'}</Property>
       <Property icon={CalendarDays} label="Created">{formatDate(task.createdAt)}</Property>
       <Property icon={CheckCircle2} label="Completed">{task.completedAt ? formatDate(task.completedAt) : 'Not completed'}</Property>
     </dl>
+    <section className="sysmon-detail-section"><h2 className="sysmon-detail-section-title"><Ticket size={16}/> Other related tickets</h2>{task.relatedTickets?.length?<div className="sysmon-related-tickets">{task.relatedTickets.map(reference=><a key={reference} className="sysmon-ticket-link" href={getHelpDeskTicketUrl(reference)} target="_blank" rel="noopener noreferrer">{reference}</a>)}</div>:<p className="sysmon-muted">No related tickets added. Add references through Edit task.</p>}</section>
+    {task.type==='Bug'&&<BugRecurrences task={task} onRefresh={onRefresh}/>}
     <section className="sysmon-detail-section"><h2 className="sysmon-detail-section-title"><FileText size={17} />{task.type === 'Enhancement' ? 'System enhancement request' : 'Bug report'}</h2><h3 className="sysmon-description-title">{task.title}</h3>
       <p className="sysmon-detail-description">{needsExpand && !expanded ? `${description.slice(0, 900)}…` : description}</p>
       {needsExpand && <button className="sysmon-button sysmon-expand-description" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}{expanded ? 'Show less' : 'Expand description'}</button>}

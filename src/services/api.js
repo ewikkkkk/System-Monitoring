@@ -25,6 +25,9 @@ async function request(path, options = {}) {
 export const getTasks = () => request('/tasks');
 export const getPeople = () => request('/people');
 export const getDeployments = () => request('/deployments');
+export const getBugOccurrences = () => request('/bug-occurrences');
+export const getTaskResolutions = () => request('/task-resolutions');
+export const logBugOccurrence = (id,body) => request(`/tasks/${encodeURIComponent(id)}/occurrences`,{method:'POST',body:JSON.stringify(body)});
 export const getVouchers = () => request('/vouchers');
 export const addVoucher = body => request('/vouchers',{method:'POST',body:JSON.stringify(body)});
 export const importVouchers = body => request('/vouchers/import',{method:'POST',body:JSON.stringify(body)});

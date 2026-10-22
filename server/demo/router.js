@@ -3,6 +3,10 @@ import { Router, json } from 'express';
 import { validDeployment } from '../deployment-validation.js';
 import { formatTaskNumber } from '../../shared/task-number.js';
 import { validVoucher, validVoucherUsage, voucherOutcome, validVoucherImport } from '../voucher-validation.js';
+import { validRelatedTickets } from '../../shared/related-tickets.js';
+import { validBugOccurrence } from '../bug-validation.js';
+import { validTaskSystem, validTaskModule } from '../../shared/task-fields.js';
+import { taskResolutions } from '../../shared/task-resolutions.js';
 
 const statuses = ['Open', 'In progress', 'In testing', 'Ready for release', 'Prod live', 'Closed'];
 const completed = status => ['Prod live', 'Closed'].includes(status);
@@ -13,7 +17,7 @@ export function createDemoMonitoringRouter(store) {
   r.get('/people', (req, res) => res.json(store.snapshot().people));
   r.get('/tasks', (req, res) => {
     const { tasks, people } = store.snapshot();
-    res.json(tasks.map(t => ({ ...t,
+    res.json(tasks.map(t => ({ ...t, moduleName:t.moduleName||'', relatedTickets:t.relatedTickets||[],
       taskNumber: formatTaskNumber(t),
       developerName: people.find(p => p.userId === t.developerId)?.displayName || null,
       testerName: people.find(p => p.userId === t.testerId)?.displayName || null
@@ -25,6 +29,28 @@ export function createDemoMonitoringRouter(store) {
     res.json(store.snapshot().history.filter(h => h.taskId === id).sort((a, b) => b.id - a.id));
   });
   r.post('/tasks', save);
+  r.get('/task-resolutions',(req,res)=>res.json(taskResolutions(store.snapshot().history).reverse()));
+  r.get('/bug-occurrences',(req,res)=>res.json((store.snapshot().bugOccurrences||[]).sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt)||b.id-a.id)));
+  r.post('/tasks/:id/occurrences',async(req,res)=>{
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    const id=Number(req.params.id),b=req.body;
+    if(!Number.isSafeInteger(id)||id<1||id>2147483647||!validBugOccurrence(b))return res.status(400).json({error:'Enter a valid recurrence date, ticket and notes; future reports are not allowed'});
+    const result=await store.update(state=>{
+      const task=state.tasks.find(task=>task.id===id);
+      if(!task)return {error:'Task not found',status:404};
+      if(task.type!=='Bug'||Date.parse(b.occurredAt)<Date.parse(task.createdAt))return {error:'Recurrence must be for a bug and occur on or after task creation',status:400};
+      if(b.deploymentId!=null&&!(state.deployments||[]).some(event=>event.id===b.deploymentId&&Date.parse(event.occurredAt)<=Date.parse(b.occurredAt)))return {error:'Choose a production event at or before the recurrence',status:400};
+      state.bugOccurrences||=[];
+      const occurrenceId=Math.max(0,...state.bugOccurrences.map(event=>event.id))+1,now=new Date().toISOString(),actor=String(req.user.userId);
+      state.bugOccurrences.push({id:occurrenceId,taskId:id,occurredAt:new Date(b.occurredAt).toISOString(),reference:b.reference.trim(),notes:b.notes.trim(),deploymentId:b.deploymentId??null,recordedAt:now,actorId:actor});
+      Object.assign(task,{updatedAt:now,updatedBy:actor});
+      if(b.reopen&&completed(task.status))Object.assign(task,{status:'Open',completedAt:null,updatedAt:now,updatedBy:actor});
+      state.history.push({id:Math.max(0,...state.history.map(h=>h.id))+1,taskId:id,actorId:actor,status:task.status,notes:`Recurrence reported. ${b.notes.trim()}`,changedAt:now});
+      return {id:occurrenceId};
+    });
+    if(result.error)return res.status(result.status).json({error:result.error});
+    res.status(201).json(result);
+  });
   r.get('/vouchers',(req,res)=>res.json((store.snapshot().vouchers||[]).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)||b.id-a.id)));
   r.get('/vouchers/:id/history',(req,res)=>{
     const id=Number(req.params.id);
@@ -149,7 +175,7 @@ export function createDemoMonitoringRouter(store) {
     if ((id !== null && (!Number.isSafeInteger(id) || id < 1)) ||
       Object.entries(strings).some(([k, max]) => typeof b[k] !== 'string' || b[k].length > max) || !b.title?.trim() ||
       !['Bug', 'Enhancement'].includes(b.type) || !statuses.includes(b.status) || !['Low', 'Normal', 'High', 'Urgent'].includes(b.priority) ||
-      !validDate || (b.estimateHours != null && (!Number.isFinite(b.estimateHours) || b.estimateHours < 0 || b.estimateHours > 9999))) {
+      !validRelatedTickets(b.relatedTickets) || !validTaskModule(b.moduleName) || !validDate || (b.estimateHours != null && (!Number.isFinite(b.estimateHours) || b.estimateHours < 0 || b.estimateHours > 9999))) {
       return res.status(400).json({ error: 'Check required fields, dates, and field lengths' });
     }
     const people = store.snapshot().people;
@@ -162,12 +188,13 @@ export function createDemoMonitoringRouter(store) {
     const result = await store.update(state => {
       const old = id === null ? null : state.tasks.find(t => t.id === id);
       if (id !== null && !old) return null;
+      if(!validTaskSystem(b.system,old?.system))return {error:'Choose WMS, Client Portal, RF Barcoding, PISA, CMMS or TOLL'};
       const now = new Date().toISOString();
       const taskId = old?.id ?? Math.max(0, ...state.tasks.map(t => t.id)) + 1;
       const task = {
         id: taskId, ...Object.fromEntries(Object.keys(strings).map(k => [k, b[k]])), title: b.title.trim(),
         type: b.type, status: b.status, priority: b.priority, developerId: b.developerId || null, testerId: b.testerId || null,
-        dueDate: b.dueDate || null, estimateHours: b.estimateHours ?? null,
+        dueDate: b.dueDate || null, estimateHours: b.estimateHours ?? null, moduleName:b.moduleName===undefined?(old?.moduleName||''):b.moduleName.trim(), relatedTickets:b.relatedTickets===undefined?(old?.relatedTickets||[]):[...new Set(b.relatedTickets.map(reference=>reference.trim()))],
         createdBy: old?.createdBy || String(req.user.userId), updatedBy: String(req.user.userId),
         createdAt: old?.createdAt || now, updatedAt: now, completedAt: completed(b.status) ? old?.completedAt || now : null
       };
@@ -177,6 +204,7 @@ export function createDemoMonitoringRouter(store) {
       return { id: taskId };
     });
     if (!result) return res.status(404).json({ error: 'Task not found' });
+    if(result.error)return res.status(400).json(result);
     res.status(id ? 200 : 201).json(result);
   }
   r.use((error, req, res, next) => {

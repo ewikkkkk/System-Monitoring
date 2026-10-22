@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { ArrowRight, Bug, Sparkles, AlertCircle, Clock3 } from 'lucide-react';
 import TaskIdentity, { StatusBadge } from '../components/TaskIdentity.jsx';
-import { formatDate, isComplete } from '../task-utils.js';
+import { formatDate } from '../task-utils.js';
 import { buildOverviewReport } from '../services/overview-report.js';
+import BugTrends from '../components/BugTrends.jsx';
 
 const rate = value => value == null ? '—' : value + '%';
 const hours = value => Number(value.toFixed(2)) + ' h';
@@ -16,6 +17,7 @@ export default function OverviewView({ tasks, people, onEdit, onSelectStatus }) 
   const [showAllAttention, setShowAllAttention] = useState(false);
   const attention = showAllAttention ? report.attention : report.attention.slice(0, 5);
   return <div className="sysmon-overview-view sysmon-detailed-report">
+    <BugTrends tasks={tasks} onOpenTask={onEdit}/>
     <section className="sysmon-report-section">
       <div className="sysmon-report-heading"><div><h2 className="sysmon-panel-title">Enhancement & bug summary</h2><p className="sysmon-panel-description">Current filtered records · Completed means Prod live or Closed · Rates use all matching tasks.</p></div><span className="sysmon-report-asof">As of {formatDate(new Date().toISOString())}</span></div>
       <ReportTable label="Enhancement and bug summary" headings={['Work type','Total','Active','In testing','Completed','Completion rate','Overdue','Active estimates']}>
@@ -25,9 +27,9 @@ export default function OverviewView({ tasks, people, onEdit, onSelectStatus }) 
       <div className="sysmon-report-facts"><span><strong>{report.createdThisWeek}</strong> created in the last 7 days</span><span><strong>{report.completedThisWeek}</strong> completed in the last 7 days</span><span><strong>{report.averageCompletionDays == null ? '—' : report.averageCompletionDays.toFixed(1) + ' days'}</strong> average creation-to-completion time</span></div>
       <p className="sysmon-report-note">Completion time uses {report.completionDateCount} tasks with valid creation and completion dates. Estimates are planned effort, not tracked time; tasks without estimates are excluded from hour totals.</p>
     </section>
-    <section className="sysmon-report-section"><h2 className="sysmon-panel-title">Delivery status breakdown</h2><p className="sysmon-panel-description">Compare both work types at each stage. Select an unfinished status to inspect its list. Completed work is summarized here.</p>
+    <section className="sysmon-report-section"><h2 className="sysmon-panel-title">Delivery status breakdown</h2><p className="sysmon-panel-description">Compare both work types at each stage. Select any status to inspect its list, including completed work.</p>
       <ReportTable label="Status breakdown" headings={['Status','Enhancements','Bugs','Total','Share of tasks']}>
-        {report.statuses.map(row => <tr key={row.status}><th className="sysmon-report-th sysmon-report-row-heading" scope="row">{isComplete(row) ? <StatusBadge status={row.status} /> : <button className="sysmon-report-status-button" onClick={() => onSelectStatus(row.status)}><StatusBadge status={row.status} /><ArrowRight size={13} /></button>}</th><Cell>{row.enhancement}</Cell><Cell>{row.bug}</Cell><Cell>{row.total}</Cell><Cell>{rate(tasks.length ? Math.round(row.total / tasks.length * 100) : null)}</Cell></tr>)}
+        {report.statuses.map(row => <tr key={row.status}><th className="sysmon-report-th sysmon-report-row-heading" scope="row"><button className="sysmon-report-status-button" onClick={() => onSelectStatus(row.status)}><StatusBadge status={row.status} /><ArrowRight size={13} /></button></th><Cell>{row.enhancement}</Cell><Cell>{row.bug}</Cell><Cell>{row.total}</Cell><Cell>{rate(tasks.length ? Math.round(row.total / tasks.length * 100) : null)}</Cell></tr>)}
       </ReportTable>
     </section>
     <section className="sysmon-report-section"><h2 className="sysmon-panel-title">Priority & delivery readiness</h2><p className="sysmon-panel-description">Priority counts and readiness checks include active tasks only. A task may appear in multiple checks.</p>
@@ -48,8 +50,8 @@ export default function OverviewView({ tasks, people, onEdit, onSelectStatus }) 
         {report.workload.length ? report.workload.map(row => <tr key={row.userId}><th className="sysmon-report-th sysmon-report-row-heading" scope="row">{row.displayName}<span className="sysmon-workload-role">{row.assignmentRole}</span></th><Cell>{row.developer}</Cell><Cell>{row.tester}</Cell><Cell>{row.active}</Cell><Cell>{row.overdue}</Cell><Cell>{hours(row.hours)}</Cell></tr>) : <tr><td className="sysmon-report-td" colSpan={6}>No assignment directory available.</td></tr>}
       </ReportTable>
     </section>
-    <section className="sysmon-report-section"><h2 className="sysmon-panel-title">System / module breakdown</h2><p className="sysmon-panel-description">Work volume, remaining backlog, and completed tasks by system.</p>
-      <ReportTable label="System breakdown report" headings={['System / module','Enhancements','Bugs','Active','Completed','Overdue']}>
+    <section className="sysmon-report-section"><h2 className="sysmon-panel-title">System breakdown</h2><p className="sysmon-panel-description">Work volume, remaining backlog, and completed tasks by system.</p>
+      <ReportTable label="System breakdown report" headings={['System','Enhancements','Bugs','Active','Completed','Overdue']}>
         {report.systems.length ? report.systems.map(row => <tr key={row.system}><th className="sysmon-report-th sysmon-report-row-heading" scope="row">{row.system}</th><Cell>{row.enhancement}</Cell><Cell>{row.bug}</Cell><Cell>{row.active}</Cell><Cell>{row.completed}</Cell><Cell>{row.overdue}</Cell></tr>) : <tr><td className="sysmon-report-td" colSpan={6}>No matching tasks.</td></tr>}
       </ReportTable>
     </section>

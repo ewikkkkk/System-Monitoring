@@ -10,6 +10,6 @@ export default function TaskIdentity({ task, onEdit, showTicketReference = true 
     <span className="sysmon-task-ref">{task.type === 'Bug' ? <Bug size={13} /> : <Sparkles size={13} />}{taskReference(task)}</span>
     <span className="sysmon-task-title">{task.title}</span>
     {showTicketReference && task.reference && <span className="sysmon-helpdesk-reference">Help Desk: {task.reference}</span>}
-    <span className="sysmon-muted">{task.system || 'System not specified'}</span>
+    <span className="sysmon-muted">{task.system || 'System not specified'}{task.moduleName ? ` · ${task.moduleName}` : ''}</span>
   </button>;
 }

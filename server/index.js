@@ -3,6 +3,9 @@ import { query, sql, withPool } from './db/pool.js';
 import { validDeployment } from './deployment-validation.js';
 import { formatTaskNumber } from '../shared/task-number.js';
 import { validVoucher, validVoucherUsage, validVoucherImport } from './voucher-validation.js';
+import { readRelatedTickets, validRelatedTickets } from '../shared/related-tickets.js';
+import { validBugOccurrence } from './bug-validation.js';
+import { taskSystems, validTaskModule } from '../shared/task-fields.js';
 
 const statuses = ['Open', 'In progress', 'In testing', 'Ready for release', 'Prod live', 'Closed'];
 const priorities = ['Low', 'Normal', 'High', 'Urgent'];
@@ -20,7 +23,7 @@ export function createSystemMonitoringRouter(getPool) {
     const result = await query(`SELECT t.*, d.displayName AS developerName, p.displayName AS testerName
       FROM monitoring.Tasks t LEFT JOIN monitoring.People d ON t.developerId = d.userId
       LEFT JOIN monitoring.People p ON t.testerId = p.userId ORDER BY t.updatedAt DESC`);
-    res.json(result.recordset.map(task => ({ ...task, taskNumber: formatTaskNumber(task) })));
+    res.json(result.recordset.map(task => ({ ...task, relatedTickets: readRelatedTickets(task.relatedTickets), taskNumber: formatTaskNumber(task) })));
   });
   r.get('/tasks/:id/history', async (req, res) => {
     const id = Number(req.params.id);
@@ -30,6 +33,47 @@ export function createSystemMonitoringRouter(getPool) {
   });
   r.put('/tasks/:id', save);
   r.post('/tasks', save);
+  // Host restricts resolution history to authorized monitoring viewers at router level.
+  r.get('/task-resolutions',async(req,res)=>{
+    const result=await query(`WITH ordered AS (
+      SELECT id,taskId,changedAt,actorId,status,LAG(status) OVER(PARTITION BY taskId ORDER BY changedAt,id) AS previousStatus
+      FROM monitoring.TaskHistory)
+      SELECT id,taskId,changedAt AS occurredAt,actorId,status FROM ordered
+      WHERE status IN ('Prod live','Closed') AND (previousStatus IS NULL OR previousStatus NOT IN ('Prod live','Closed'))
+      ORDER BY changedAt DESC,id DESC`);
+    res.json(result.recordset);
+  });
+  // Host: recurrence reads require monitoring-viewer access; writes require developers/testers/team leads.
+  r.get('/bug-occurrences',async(req,res)=>{
+    res.json((await query('SELECT * FROM monitoring.BugOccurrences ORDER BY occurredAt DESC,id DESC')).recordset);
+  });
+  r.post('/tasks/:id/occurrences',async(req,res)=>{
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    const id=Number(req.params.id),b=req.body;
+    if(!Number.isSafeInteger(id)||id<1||id>2147483647||!validBugOccurrence(b))return res.status(400).json({error:'Enter a valid recurrence date, ticket and notes; future reports are not allowed'});
+    const result=await query(`SET XACT_ABORT ON; BEGIN TRY BEGIN TRANSACTION;
+      DECLARE @type nvarchar(20),@createdAt datetime2,@status nvarchar(30);
+      SELECT @type=type,@createdAt=createdAt,@status=status FROM monitoring.Tasks WITH(UPDLOCK,HOLDLOCK) WHERE id=@id;
+      IF @type IS NULL THROW 50001,'Task not found',1;
+      IF @type<>'Bug' OR @occurredAt<@createdAt THROW 50006,'Recurrence must be for a bug and occur on or after task creation',1;
+      IF @deployment IS NOT NULL AND NOT EXISTS(SELECT 1 FROM monitoring.Deployments WHERE id=@deployment AND occurredAt<=@occurredAt)
+        THROW 50006,'Choose a production event at or before the recurrence',1;
+      DECLARE @created TABLE(id int);
+      INSERT monitoring.BugOccurrences(taskId,occurredAt,reference,notes,deploymentId,actorId)
+        OUTPUT INSERTED.id INTO @created VALUES(@id,@occurredAt,@reference,@notes,@deployment,@actor);
+      UPDATE monitoring.Tasks SET updatedAt=SYSUTCDATETIME(),updatedBy=@actor WHERE id=@id;
+      IF @reopen=1 AND @status IN ('Prod live','Closed') BEGIN
+        UPDATE monitoring.Tasks SET status='Open',completedAt=NULL,updatedAt=SYSUTCDATETIME(),updatedBy=@actor WHERE id=@id;
+        SET @status='Open';
+      END;
+      INSERT monitoring.TaskHistory(taskId,actorId,status,notes) VALUES(@id,@actor,@status,CONCAT('Recurrence reported. ',@notes));
+      COMMIT; SELECT id FROM @created;
+      END TRY BEGIN CATCH IF @@TRANCOUNT>0 ROLLBACK; THROW; END CATCH`,{
+      id:{type:sql.Int,value:id},occurredAt:{type:sql.DateTime2,value:new Date(b.occurredAt)},reference:{type:sql.NVarChar(80),value:b.reference.trim()},
+      notes:{type:sql.NVarChar(4000),value:b.notes.trim()},deployment:{type:sql.Int,value:b.deploymentId??null},reopen:{type:sql.Bit,value:b.reopen},actor:{type:sql.NVarChar(128),value:String(req.user.userId)}
+    });
+    res.status(201).json(result.recordset[0]);
+  });
   // Host must restrict all voucher reads/writes to authorized Infra staff/team leads.
   // Codes can grant network access. Do not expose these routes to general task viewers.
   r.get('/vouchers', async (req,res) => {
@@ -163,8 +207,8 @@ export function createSystemMonitoringRouter(getPool) {
     if ((id !== null && (!Number.isSafeInteger(id) || id < 1)) || typeof b.title !== 'string' || !b.title.trim() || b.title.length > 240 ||
       !['Bug', 'Enhancement'].includes(b.type) || !statuses.includes(b.status) || !priorities.includes(b.priority) ||
       !validId(b.developerId) || !validId(b.testerId) || typeof b.description !== 'string' || b.description.length > 8000 ||
-      typeof b.notes !== 'string' || b.notes.length > 8000 || typeof b.system !== 'string' || b.system.length > 100 ||
-      typeof b.reference !== 'string' || b.reference.length > 80 ||
+      typeof b.notes !== 'string' || b.notes.length > 8000 || typeof b.system !== 'string' || b.system.length > 100 || !validTaskModule(b.moduleName) || (id===null && !taskSystems.includes(b.system)) ||
+      typeof b.reference !== 'string' || b.reference.length > 80 || !validRelatedTickets(b.relatedTickets) ||
       (b.dueDate && (!/^\d{4}-\d{2}-\d{2}$/.test(b.dueDate) || Number.isNaN(Date.parse(b.dueDate)))) ||
       (b.estimateHours != null && (!Number.isFinite(b.estimateHours) || b.estimateHours < 0 || b.estimateHours > 9999))) {
       return res.status(400).json({ error: 'Check required fields, assignments, dates, and field lengths' });
@@ -176,19 +220,24 @@ export function createSystemMonitoringRouter(getPool) {
       notes: { type: sql.NVarChar(8000), value: b.notes }, system: { type: sql.NVarChar(100), value: b.system },
       reference: { type: sql.NVarChar(80), value: b.reference }, developerId: { type: sql.NVarChar(128), value: b.developerId || null },
       testerId: { type: sql.NVarChar(128), value: b.testerId || null }, dueDate: { type: sql.Date, value: b.dueDate || null },
-      estimateHours: { type: sql.Decimal(7, 2), value: b.estimateHours ?? null }, actor: { type: sql.NVarChar(128), value: String(req.user.userId) }
+      estimateHours: { type: sql.Decimal(7, 2), value: b.estimateHours ?? null }, actor: { type: sql.NVarChar(128), value: String(req.user.userId) },
+      relatedTickets:{type:sql.NVarChar(sql.MAX),value:b.relatedTickets === undefined ? null : JSON.stringify([...new Set(b.relatedTickets.map(reference=>reference.trim()))])},
+      moduleName:{type:sql.NVarChar(120),value:b.moduleName===undefined?null:b.moduleName.trim()},allowedSystems:{type:sql.NVarChar(sql.MAX),value:JSON.stringify(taskSystems)}
     };
     const result = await query(`SET XACT_ABORT ON;
       BEGIN TRY
       BEGIN TRANSACTION;
+      IF NOT EXISTS(SELECT 1 FROM OPENJSON(@allowedSystems) WHERE value=@system)
+        AND (@id IS NULL OR NOT EXISTS(SELECT 1 FROM monitoring.Tasks WITH(UPDLOCK,HOLDLOCK) WHERE id=@id AND system=@system))
+        THROW 50007,'Choose a supported system; existing legacy values may only be preserved unchanged',1;
       IF @id IS NULL BEGIN
-        INSERT monitoring.Tasks (title,type,status,priority,description,notes,system,reference,developerId,testerId,dueDate,estimateHours,createdBy,updatedBy,completedAt)
-        VALUES (@title,@type,@status,@priority,@description,@notes,@system,@reference,@developerId,@testerId,@dueDate,@estimateHours,@actor,@actor,CASE WHEN @status IN ('Prod live','Closed') THEN SYSUTCDATETIME() ELSE NULL END);
+        INSERT monitoring.Tasks (title,type,status,priority,description,notes,system,reference,developerId,testerId,dueDate,estimateHours,createdBy,updatedBy,completedAt,relatedTickets,moduleName)
+        VALUES (@title,@type,@status,@priority,@description,@notes,@system,@reference,@developerId,@testerId,@dueDate,@estimateHours,@actor,@actor,CASE WHEN @status IN ('Prod live','Closed') THEN SYSUTCDATETIME() ELSE NULL END,COALESCE(@relatedTickets,'[]'),COALESCE(@moduleName,''));
         SET @id = SCOPE_IDENTITY();
       END ELSE BEGIN
         UPDATE monitoring.Tasks SET title=@title,type=@type,status=@status,priority=@priority,description=@description,notes=@notes,system=@system,
         reference=@reference,developerId=@developerId,testerId=@testerId,dueDate=@dueDate,estimateHours=@estimateHours,
-        updatedBy=@actor,updatedAt=SYSUTCDATETIME(),completedAt=CASE WHEN @status IN ('Prod live','Closed') THEN COALESCE(completedAt,SYSUTCDATETIME()) ELSE NULL END WHERE id=@id;
+        moduleName=COALESCE(@moduleName,moduleName),relatedTickets=COALESCE(@relatedTickets,relatedTickets),updatedBy=@actor,updatedAt=SYSUTCDATETIME(),completedAt=CASE WHEN @status IN ('Prod live','Closed') THEN COALESCE(completedAt,SYSUTCDATETIME()) ELSE NULL END WHERE id=@id;
         IF @@ROWCOUNT = 0 THROW 50001, 'Task not found', 1;
       END;
       INSERT monitoring.TaskHistory (taskId,actorId,status,notes) VALUES (@id,@actor,@status,@notes);
@@ -204,6 +253,8 @@ export function createSystemMonitoringRouter(getPool) {
     if(error.number===50003) return res.status(404).json({error:'Voucher not found'});
     if(error.number===50004) return res.status(409).json({error:'Voucher is no longer active. Refresh the inventory.'});
     if(error.number===50005) return res.status(409).json({error:'Only a location-mismatch voucher can be returned to active inventory'});
+    if(error.number===50006) return res.status(400).json({error:'Recurrences require a Bug task, a date on or after task creation, and an optional production event at or before that date'});
+    if(error.number===50007) return res.status(400).json({error:'Choose WMS, Client Portal, RF Barcoding, PISA, CMMS or TOLL'});
     if([2601,2627].includes(error.number) && req.path.startsWith('/vouchers')) return res.status(409).json({error:'This voucher code already exists'});
     if (error.number === 50001) return res.status(404).json({ error: 'Task not found' });
     if ([50002,2601,2627].includes(error.number)) return res.status(409).json({ error: 'Invalid revert date/target, or this deployment already has a revert log.' });
