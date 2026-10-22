@@ -25,6 +25,12 @@ async function request(path, options = {}) {
 export const getTasks = () => request('/tasks');
 export const getPeople = () => request('/people');
 export const getDeployments = () => request('/deployments');
+export const getVouchers = () => request('/vouchers');
+export const addVoucher = body => request('/vouchers',{method:'POST',body:JSON.stringify(body)});
+export const importVouchers = body => request('/vouchers/import',{method:'POST',body:JSON.stringify(body)});
+export const restoreVoucher = (id, reason) => request(`/vouchers/${encodeURIComponent(id)}/restore`,{method:'POST',body:JSON.stringify({reason})});
+export const useVoucher = (id,body) => request(`/vouchers/${encodeURIComponent(id)}/use`,{method:'POST',body:JSON.stringify(body)});
+export const getVoucherHistory = id => request(`/vouchers/${encodeURIComponent(id)}/history`);
 export const logDeployment = body => request('/deployments', { method: 'POST', body: JSON.stringify(body) });
 export const changeTaskStatus = (id, status) => request(`/tasks/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
 export const getTaskHistory = id => request(`/tasks/${encodeURIComponent(id)}/history`);

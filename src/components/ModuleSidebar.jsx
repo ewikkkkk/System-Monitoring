@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, LayoutDashboard, List, CalendarDays, Plus, Moon, Sun } from 'lucide-react';
+import { Activity, LayoutDashboard, List, CalendarDays, Plus, Moon, Sun, TicketCheck } from 'lucide-react';
 
 const views = [['overview', 'Overview', LayoutDashboard], ['list', 'List', List], ['calendar', 'Calendar', CalendarDays]];
 
@@ -14,6 +14,8 @@ export default function ModuleSidebar({ view, taskOpen, taskCount, onNavigate, o
         <Icon size={17} /><span>{label}</span>{key === 'list' && <span className="sysmon-count">{taskCount}</span>}
       </button>
     )}</nav>
+    <div className="sysmon-sidebar-label sysmon-infra-label">INFRA OPERATIONS</div>
+    <nav className="sysmon-sidebar-nav" aria-label="Infra views"><button className={'sysmon-sidebar-link'+(view==='vouchers'?' sysmon-sidebar-link-active':'')} aria-current={view==='vouchers'?'page':undefined} onClick={()=>onNavigate('vouchers')}><TicketCheck size={17}/><span>Voucher monitoring</span></button></nav>
     <button className="sysmon-button sysmon-sidebar-create" onClick={onCreate} disabled={disabled}><Plus size={16} /> New task</button>
     <button className="sysmon-theme-toggle" role="switch" aria-label="Dark mode" aria-checked={darkMode} onClick={onToggleDarkMode}>
       {darkMode ? <Moon size={16} /> : <Sun size={16} />}<span>Dark mode</span><span className={`sysmon-switch-track ${darkMode ? 'sysmon-switch-on' : ''}`}><span className="sysmon-switch-thumb" /></span>

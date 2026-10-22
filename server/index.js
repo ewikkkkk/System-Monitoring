@@ -2,6 +2,7 @@ import { Router, json } from 'express';
 import { query, sql, withPool } from './db/pool.js';
 import { validDeployment } from './deployment-validation.js';
 import { formatTaskNumber } from '../shared/task-number.js';
+import { validVoucher, validVoucherUsage, validVoucherImport } from './voucher-validation.js';
 
 const statuses = ['Open', 'In progress', 'In testing', 'Ready for release', 'Prod live', 'Closed'];
 const priorities = ['Low', 'Normal', 'High', 'Urgent'];
@@ -29,6 +30,89 @@ export function createSystemMonitoringRouter(getPool) {
   });
   r.put('/tasks/:id', save);
   r.post('/tasks', save);
+  // Host must restrict all voucher reads/writes to authorized Infra staff/team leads.
+  // Codes can grant network access. Do not expose these routes to general task viewers.
+  r.get('/vouchers', async (req,res) => {
+    res.json((await query('SELECT * FROM monitoring.Vouchers ORDER BY updatedAt DESC,id DESC')).recordset);
+  });
+  r.get('/vouchers/:id/history', async (req,res) => {
+    const id=Number(req.params.id);
+    if(!Number.isSafeInteger(id)||id<1) return res.status(400).json({error:'Invalid voucher ID'});
+    res.json((await query('SELECT * FROM monitoring.VoucherHistory WHERE voucherId=@id ORDER BY changedAt DESC,id DESC',{id:{type:sql.Int,value:id}})).recordset);
+  });
+  r.post('/vouchers', async (req,res) => {
+    if(!req.user?.userId) return res.status(401).json({error:'Host user context is required'});
+    if(!validVoucher(req.body)) return res.status(400).json({error:'Enter a voucher code and Bancal location'});
+    const result=await query(`SET XACT_ABORT ON; BEGIN TRY BEGIN TRANSACTION;
+      DECLARE @created TABLE(id int);
+      INSERT monitoring.Vouchers(code,location,createdBy,updatedBy) OUTPUT INSERTED.id INTO @created VALUES(@code,@location,@actor,@actor);
+      DECLARE @id int=(SELECT id FROM @created);
+      INSERT monitoring.VoucherHistory(voucherId,action,status,note,actorId) VALUES(@id,'Added','Active','Voucher added to active inventory',@actor);
+      COMMIT; SELECT id FROM @created;
+      END TRY BEGIN CATCH IF @@TRANCOUNT>0 ROLLBACK; THROW; END CATCH`,{
+      code:{type:sql.NVarChar(120),value:req.body.code.trim()},location:{type:sql.NVarChar(20),value:req.body.location},actor:{type:sql.NVarChar(128),value:String(req.user.userId)}
+    });
+    res.status(201).json(result.recordset[0]);
+  });
+  r.post('/vouchers/import', async (req,res) => {
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    if(!validVoucherImport(req.body))return res.status(400).json({error:'Choose a Bancal location and 1–500 valid voucher codes'});
+    const result=await query(`SET XACT_ABORT ON; BEGIN TRY BEGIN TRANSACTION;
+      DECLARE @created TABLE(id int);
+      INSERT monitoring.Vouchers(code,location,createdBy,updatedBy) OUTPUT INSERTED.id INTO @created
+        SELECT DISTINCT j.code,@location,@actor,@actor FROM OPENJSON(@codes) WITH(code nvarchar(120) '$') j
+        WHERE NOT EXISTS(SELECT 1 FROM monitoring.Vouchers v WITH(UPDLOCK,HOLDLOCK) WHERE v.code=j.code);
+      INSERT monitoring.VoucherHistory(voucherId,action,status,note,actorId)
+        SELECT id,'Imported','Active','Imported to active inventory',@actor FROM @created;
+      COMMIT; SELECT COUNT(*) AS imported,@total-COUNT(*) AS skipped FROM @created;
+      END TRY BEGIN CATCH IF @@TRANCOUNT>0 ROLLBACK; THROW; END CATCH`,{
+      codes:{type:sql.NVarChar(sql.MAX),value:JSON.stringify(req.body.codes)},location:{type:sql.NVarChar(20),value:req.body.location},
+      actor:{type:sql.NVarChar(128),value:String(req.user.userId)},total:{type:sql.Int,value:req.body.codes.length}
+    });
+    res.status(201).json(result.recordset[0]);
+  });
+  r.post('/vouchers/:id/restore',async(req,res)=>{
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    const id=Number(req.params.id),reason=req.body?.reason;
+    if(!Number.isSafeInteger(id)||id<1||typeof reason!=='string'||!reason.trim()||reason.length>2000)return res.status(400).json({error:'Enter a reason for returning the voucher to active inventory'});
+    const result=await query(`SET XACT_ABORT ON; BEGIN TRY BEGIN TRANSACTION;
+      DECLARE @previous nvarchar(10),@location nvarchar(20),@requested nvarchar(20),@finding nvarchar(2400);
+      SELECT @previous=status,@location=location,@requested=requestedLocation,@finding=finding FROM monitoring.Vouchers WITH(UPDLOCK,HOLDLOCK) WHERE id=@id;
+      IF @previous IS NULL THROW 50003,'Voucher not found',1;
+      IF @previous<>'Invalid' OR @requested IS NULL OR @location=@requested OR @finding NOT LIKE 'Location mismatch:%'
+        THROW 50005,'Only a location-mismatch voucher can be returned to active inventory',1;
+      DECLARE @details nvarchar(max)=(SELECT ticketReference,personInvolved,client,device,purpose,durationHours,requestedLocation,finding,occurredAt FROM monitoring.Vouchers WHERE id=@id FOR JSON PATH,WITHOUT_ARRAY_WRAPPER);
+      UPDATE monitoring.Vouchers SET status='Active',updatedAt=SYSUTCDATETIME(),updatedBy=@actor WHERE id=@id;
+      INSERT monitoring.VoucherHistory(voucherId,action,status,note,details,actorId) VALUES(@id,'Returned to active','Active',@reason,@details,@actor);
+      COMMIT; SELECT * FROM monitoring.Vouchers WHERE id=@id;
+      END TRY BEGIN CATCH IF @@TRANCOUNT>0 ROLLBACK; THROW; END CATCH`,{
+      id:{type:sql.Int,value:id},reason:{type:sql.NVarChar(2000),value:reason.trim()},actor:{type:sql.NVarChar(128),value:String(req.user.userId)}
+    });
+    res.json(result.recordset[0]);
+  });
+  r.post('/vouchers/:id/use', async (req,res) => {
+    if(!req.user?.userId) return res.status(401).json({error:'Host user context is required'});
+    const id=Number(req.params.id),b=req.body;
+    if(!Number.isSafeInteger(id)||id<1||!validVoucherUsage(b)) return res.status(400).json({error:'Check the ticket, recipient, client, details, location, duration and finding'});
+    const result=await query(`SET XACT_ABORT ON; BEGIN TRY BEGIN TRANSACTION;
+      DECLARE @location nvarchar(20),@previous nvarchar(10);
+      SELECT @location=location,@previous=status FROM monitoring.Vouchers WITH(UPDLOCK,HOLDLOCK) WHERE id=@id;
+      IF @previous IS NULL THROW 50003,'Voucher not found',1;
+      IF @previous<>'Active' THROW 50004,'Voucher is no longer active',1;
+      DECLARE @next nvarchar(10)=CASE WHEN @location<>@requestedLocation THEN 'Active' WHEN @outcome='Invalid' THEN 'Invalid' ELSE 'Used' END;
+      DECLARE @finding nvarchar(2400)=CASE WHEN @location<>@requestedLocation THEN CONCAT('Location mismatch: voucher is for ',@location,'; requested at ',@requestedLocation,'. ',@findingInput) ELSE @findingInput END;
+      UPDATE monitoring.Vouchers SET status=@next,ticketReference=@ticket,personInvolved=@person,client=@client,device=@device,purpose=@purpose,
+        durationHours=@duration,requestedLocation=@requestedLocation,finding=@finding,occurredAt=@occurredAt,updatedBy=@actor,updatedAt=SYSUTCDATETIME() WHERE id=@id;
+      INSERT monitoring.VoucherHistory(voucherId,action,status,note,details,actorId) VALUES(@id,CASE WHEN @next='Active' THEN 'Location mismatch' WHEN @outcome='Invalid' THEN 'Finding recorded' ELSE 'Use attempted' END,@next,@finding,@details,@actor);
+      COMMIT; SELECT * FROM monitoring.Vouchers WHERE id=@id;
+      END TRY BEGIN CATCH IF @@TRANCOUNT>0 ROLLBACK; THROW; END CATCH`,{
+      id:{type:sql.Int,value:id},outcome:{type:sql.NVarChar(10),value:b.outcome},requestedLocation:{type:sql.NVarChar(20),value:b.requestedLocation},
+      ticket:{type:sql.NVarChar(80),value:b.ticketReference.trim()},person:{type:sql.NVarChar(160),value:b.personInvolved.trim()},client:{type:sql.NVarChar(160),value:b.client.trim()},
+      device:{type:sql.NVarChar(160),value:b.device.trim()},purpose:{type:sql.NVarChar(2000),value:b.purpose.trim()},duration:{type:sql.Decimal(8,2),value:b.durationHours??null},
+      findingInput:{type:sql.NVarChar(2000),value:b.finding.trim()},occurredAt:{type:sql.DateTime2,value:new Date(b.occurredAt)},actor:{type:sql.NVarChar(128),value:String(req.user.userId)},details:{type:sql.NVarChar(sql.MAX),value:JSON.stringify({ticketReference:b.ticketReference,personInvolved:b.personInvolved,client:b.client,device:b.device,purpose:b.purpose,durationHours:b.durationHours,requestedLocation:b.requestedLocation,occurredAt:b.occurredAt})}
+    });
+    res.json(result.recordset[0]);
+  });
   // Host restricts status writes to developers/testers/leads at router middleware level.
   r.patch('/tasks/:id/status', async (req, res) => {
     if (!req.user?.userId) return res.status(401).json({ error: 'Host user context is required' });
@@ -117,6 +201,10 @@ export function createSystemMonitoringRouter(getPool) {
     res.status(id ? 200 : 201).json(result.recordset[0]);
   }
   r.use((error, req, res, next) => {
+    if(error.number===50003) return res.status(404).json({error:'Voucher not found'});
+    if(error.number===50004) return res.status(409).json({error:'Voucher is no longer active. Refresh the inventory.'});
+    if(error.number===50005) return res.status(409).json({error:'Only a location-mismatch voucher can be returned to active inventory'});
+    if([2601,2627].includes(error.number) && req.path.startsWith('/vouchers')) return res.status(409).json({error:'This voucher code already exists'});
     if (error.number === 50001) return res.status(404).json({ error: 'Task not found' });
     if ([50002,2601,2627].includes(error.number)) return res.status(409).json({ error: 'Invalid revert date/target, or this deployment already has a revert log.' });
     if (error.number === 547) return res.status(400).json({ error: 'Assignment does not match a registered person' });

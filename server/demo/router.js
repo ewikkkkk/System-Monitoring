@@ -2,6 +2,7 @@
 import { Router, json } from 'express';
 import { validDeployment } from '../deployment-validation.js';
 import { formatTaskNumber } from '../../shared/task-number.js';
+import { validVoucher, validVoucherUsage, voucherOutcome, validVoucherImport } from '../voucher-validation.js';
 
 const statuses = ['Open', 'In progress', 'In testing', 'Ready for release', 'Prod live', 'Closed'];
 const completed = status => ['Prod live', 'Closed'].includes(status);
@@ -24,6 +25,79 @@ export function createDemoMonitoringRouter(store) {
     res.json(store.snapshot().history.filter(h => h.taskId === id).sort((a, b) => b.id - a.id));
   });
   r.post('/tasks', save);
+  r.get('/vouchers',(req,res)=>res.json((store.snapshot().vouchers||[]).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)||b.id-a.id)));
+  r.get('/vouchers/:id/history',(req,res)=>{
+    const id=Number(req.params.id);
+    if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Invalid voucher ID'});
+    res.json((store.snapshot().voucherHistory||[]).filter(h=>h.voucherId===id).sort((a,b)=>b.id-a.id));
+  });
+  r.post('/vouchers',async(req,res)=>{
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    const b=req.body;
+    if(!validVoucher(b))return res.status(400).json({error:'Enter a voucher code and Bancal location'});
+    const result=await store.update(state=>{
+      state.vouchers||=[];state.voucherHistory||=[];
+      if(state.vouchers.some(v=>v.code.toLowerCase()===b.code.trim().toLowerCase()))return null;
+      const id=Math.max(0,...state.vouchers.map(v=>v.id))+1,now=new Date().toISOString(),actor=String(req.user.userId);
+      state.vouchers.push({id,code:b.code.trim(),location:b.location,status:'Active',ticketReference:'',personInvolved:'',client:'',device:'',purpose:'',durationHours:null,requestedLocation:null,finding:'',occurredAt:null,createdAt:now,updatedAt:now,createdBy:actor,updatedBy:actor});
+      state.voucherHistory.push({id:Math.max(0,...state.voucherHistory.map(h=>h.id))+1,voucherId:id,action:'Added',status:'Active',note:'Voucher added to active inventory',actorId:actor,changedAt:now});
+      return {id};
+    });
+    if(!result)return res.status(409).json({error:'This voucher code already exists'});
+    res.status(201).json(result);
+  });
+  r.post('/vouchers/import',async(req,res)=>{
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    if(!validVoucherImport(req.body))return res.status(400).json({error:'Choose a Bancal location and 1–500 valid voucher codes'});
+    const result=await store.update(state=>{
+      state.vouchers||=[];state.voucherHistory||=[];
+      const known=new Set(state.vouchers.map(v=>v.code.toLowerCase()));
+      let imported=0;
+      for(const code of req.body.codes){
+        if(known.has(code.toLowerCase()))continue;
+        const id=Math.max(0,...state.vouchers.map(v=>v.id))+1,now=new Date().toISOString(),actor=String(req.user.userId);
+        state.vouchers.push({id,code,location:req.body.location,status:'Active',ticketReference:'',personInvolved:'',client:'',device:'',purpose:'',durationHours:null,requestedLocation:null,finding:'',occurredAt:null,createdAt:now,updatedAt:now,createdBy:actor,updatedBy:actor});
+        state.voucherHistory.push({id:Math.max(0,...state.voucherHistory.map(h=>h.id))+1,voucherId:id,action:'Imported',status:'Active',note:'Imported to active inventory',actorId:actor,changedAt:now});
+        known.add(code.toLowerCase()); imported++;
+      }
+      return {imported,skipped:req.body.codes.length-imported};
+    });
+    res.status(201).json(result);
+  });
+  r.post('/vouchers/:id/restore',async(req,res)=>{
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    const id=Number(req.params.id),reason=req.body?.reason;
+    if(!Number.isSafeInteger(id)||id<1||typeof reason!=='string'||!reason.trim()||reason.length>2000)return res.status(400).json({error:'Enter a reason for returning the voucher to active inventory'});
+    const result=await store.update(state=>{
+      const voucher=(state.vouchers||[]).find(v=>v.id===id);
+      if(!voucher)return {error:'Voucher not found',statusCode:404};
+      if(voucher.status!=='Invalid'||!voucher.requestedLocation||voucher.requestedLocation===voucher.location||!voucher.finding.startsWith('Location mismatch:'))return {error:'Only a location-mismatch voucher can be returned to active inventory',statusCode:409};
+      const now=new Date().toISOString(),actor=String(req.user.userId),details=JSON.stringify(voucher);
+      Object.assign(voucher,{status:'Active',updatedAt:now,updatedBy:actor});
+      state.voucherHistory||=[];
+      state.voucherHistory.push({id:Math.max(0,...state.voucherHistory.map(h=>h.id))+1,voucherId:id,action:'Returned to active',status:'Active',note:reason.trim(),details,actorId:actor,changedAt:now});
+      return voucher;
+    });
+    if(result.error)return res.status(result.statusCode).json({error:result.error});
+    res.json(result);
+  });
+  r.post('/vouchers/:id/use',async(req,res)=>{
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    const id=Number(req.params.id),b=req.body;
+    if(!Number.isSafeInteger(id)||id<1||!validVoucherUsage(b))return res.status(400).json({error:'Check required ticket, recipient, details, duration, location and finding'});
+    const result=await store.update(state=>{
+      const voucher=(state.vouchers||[]).find(v=>v.id===id);
+      if(!voucher)return {error:'Voucher not found',statusCode:404};
+      if(voucher.status!=='Active')return {error:'Voucher is no longer active. Refresh the inventory.',statusCode:409};
+      const next=voucherOutcome(voucher,b),now=new Date().toISOString(),actor=String(req.user.userId);
+      Object.assign(voucher,next,...['ticketReference','personInvolved','client','device','purpose'].map(key=>({[key]:b[key].trim()})),{durationHours:b.durationHours??null,requestedLocation:b.requestedLocation,occurredAt:new Date(b.occurredAt).toISOString(),updatedAt:now,updatedBy:actor});
+      state.voucherHistory||=[];
+      state.voucherHistory.push({id:Math.max(0,...state.voucherHistory.map(h=>h.id))+1,voucherId:id,action:next.status==='Active'?'Location mismatch':b.outcome==='Invalid'?'Finding recorded':'Use attempted',status:next.status,note:next.finding,details:JSON.stringify(b),actorId:actor,changedAt:now});
+      return voucher;
+    });
+    if(result.error)return res.status(result.statusCode).json({error:result.error});
+    res.json(result);
+  });
   r.put('/tasks/:id', save);
   r.patch('/tasks/:id/status', async (req, res) => {
     if (!req.user?.userId) return res.status(401).json({ error: 'Host user context is required' });

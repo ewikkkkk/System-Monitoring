@@ -1,0 +1,75 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import express from 'express';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createDemoStore } from './store.js';
+import { createDemoMonitoringRouter } from './router.js';
+
+test('voucher inventory persists location tags, usage, mismatch findings and host identity; prevents reuse', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'sysmon-vouchers-'));
+  const file = join(dir, 'db.json'), store = await createDemoStore(file);
+  const app = express();
+  app.use((req, res, next) => { req.user = { userId: 'host-infra' }; next(); });
+  app.use(createDemoMonitoringRouter(store));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(async () => { await new Promise(resolve => server.close(resolve)); await rm(dir, { recursive: true, force: true }); });
+  const request = (path, body) => fetch(`http://127.0.0.1:${server.address().port}${path}`, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {});
+  const create = async (code, location = 'Bancal 1') => {
+    const response = await request('/vouchers', { code, location, status: 'Used', createdBy: 'forged' });
+    assert.equal(response.status, 201); return (await response.json()).id;
+  };
+  assert.equal((await request('/vouchers', { code: 'DEMO-INVALID' })).status, 400);
+  assert.equal((await request('/vouchers', { code: 'DEMO-INVALID', location: 'Elsewhere' })).status, 400);
+  const first = await create('00123-DEMO');
+  assert.equal((await request('/vouchers', { code: ' 00123-demo ', location: 'Bancal 2' })).status, 409);
+  let rows = await (await request('/vouchers')).json();
+  assert.equal(rows[0].status, 'Active'); assert.equal(rows[0].location, 'Bancal 1'); assert.equal(rows[0].createdBy, 'host-infra');
+  const usage = { outcome: 'Use', requestedLocation: 'Bancal 1', occurredAt: new Date().toISOString(), ticketReference: 'DEMO-HD-100', personInvolved: 'Demo visitor', client: 'Demo client', device: 'Laptop', purpose: 'Demo visit', durationHours: 8, finding: '', updatedBy: 'forged' };
+  assert.equal((await request(`/vouchers/${first}/use`, { ...usage, ticketReference: '' })).status, 400);
+  const responses = await Promise.all([request(`/vouchers/${first}/use`, usage), request(`/vouchers/${first}/use`, usage)]);
+  assert.deepEqual(responses.map(r => r.status).sort(), [200, 409]);
+  const mismatch = await create('DEMO-MISMATCH');
+  const invalid = await (await request(`/vouchers/${mismatch}/use`, { ...usage, requestedLocation: 'Bancal 2' })).json();
+  assert.equal(invalid.status, 'Active'); assert.match(invalid.finding, /Bancal 1.*Bancal 2/);
+  const usedAfterMismatch = await (await request(`/vouchers/${mismatch}/use`, usage)).json();
+  assert.equal(usedAfterMismatch.status, 'Used');
+  const manual = await create('DEMO-FINDING', 'Bancal 2');
+  assert.equal((await request(`/vouchers/${manual}/use`, { ...usage, outcome: 'Invalid' })).status, 400);
+  assert.equal((await request(`/vouchers/${manual}/use`, { ...usage, outcome: 'Invalid', requestedLocation: 'Bancal 2', finding: 'Code rejected by network' })).status, 200);
+  const reloaded = await createDemoStore(file);
+  const used = reloaded.snapshot().vouchers.find(v => v.id === first);
+  assert.equal(used.status, 'Used'); assert.equal(used.code, '00123-DEMO'); assert.equal(used.updatedBy, 'host-infra'); assert.equal(used.ticketReference, usage.ticketReference);
+  const history = await (await request(`/vouchers/${mismatch}/history`)).json();
+  assert.equal(history.length, 3); assert.equal(history[0].status, 'Used'); assert.equal(history[0].actorId, 'host-infra');
+  assert.match(history[1].note, /Location mismatch/);
+  assert.equal(JSON.parse(history[1].details).requestedLocation, 'Bancal 2');
+  assert.equal((await request(`/vouchers/${first}/restore`, {reason:'Cannot restore a consumed code'})).status, 409);
+  assert.equal((await request(`/vouchers/${manual}/restore`, {reason:'Cannot restore a non-location failure'})).status, 409);
+  // A record marked Invalid by the earlier implementation can be explicitly recovered.
+  await store.update(state => {
+    const voucher = state.vouchers.find(v => v.id === manual);
+    Object.assign(voucher, {requestedLocation:'Bancal 1',finding:'Location mismatch: voucher is for Bancal 2; requested at Bancal 1.'});
+  });
+  assert.equal((await request(`/vouchers/${manual}/restore`, {reason:''})).status, 400);
+  assert.equal((await request(`/vouchers/${manual}/restore`, {reason:'Verified usable at Bancal 2',userId:'forged'})).status, 200);
+  const restoredHistory = await (await request(`/vouchers/${manual}/history`)).json();
+  assert.equal(restoredHistory[0].action,'Returned to active');
+  assert.equal(restoredHistory[0].actorId,'host-infra');
+  assert.equal(JSON.parse(restoredHistory[0].details).requestedLocation,'Bancal 1');
+  assert.equal((await request(`/vouchers/${manual}/use`, {...usage, requestedLocation:'Bancal 2'})).status,200);
+
+  assert.equal((await request('/vouchers/import',{codes:['00000-00001'],location:'Unknown'})).status,400);
+  assert.equal((await request('/vouchers/import',{codes:['invalid'],location:'Bancal 1'})).status,400);
+  assert.equal((await request('/vouchers/import',{codes:Array(501).fill('00000-00001'),location:'Bancal 1'})).status,400);
+  const imported = await request('/vouchers/import',{codes:['00000-00001','00000-00002','00000-00001'],location:'Bancal 2',createdBy:'forged'});
+  assert.equal(imported.status,201); assert.deepEqual(await imported.json(),{imported:2,skipped:1});
+  const repeated = await request('/vouchers/import',{codes:['00000-00001','00000-00002'],location:'Bancal 1'});
+  assert.deepEqual(await repeated.json(),{imported:0,skipped:2});
+  rows = await (await request('/vouchers')).json();
+  const importedRow=rows.find(v=>v.code==='00000-00001');
+  assert.equal(importedRow.location,'Bancal 2'); assert.equal(importedRow.status,'Active'); assert.equal(importedRow.createdBy,'host-infra');
+  assert.equal((await createDemoStore(file)).snapshot().vouchers.find(v=>v.id===importedRow.id).code,'00000-00001');
+});
