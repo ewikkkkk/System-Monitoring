@@ -1,8 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Pencil, CircleDot, CalendarDays, Users, UserRoundCheck, Flag, Hourglass, Layers, CheckCircle2, FileText, MessageSquare, History, ChevronDown, ChevronUp, Ticket } from 'lucide-react';
-import { getTaskHistory } from '../services/api.js';
+import ActivityHistoryModal from '../components/ActivityHistoryModal.jsx';
 import { formatDate, taskReference, statuses } from '../task-utils.js';
-import { StatusBadge } from '../components/TaskIdentity.jsx';
 
 function Property({ icon: Icon, label, children }) {
   return <div className="sysmon-detail-property"><dt className="sysmon-detail-label"><Icon size={16} />{label}</dt><dd className="sysmon-detail-value">{children}</dd></div>;
@@ -17,23 +16,15 @@ export default function TaskDetailView({ task, onBack, onEdit, onStatusChange })
     catch (error) { setStatusError(error.message); }
     finally { setStatusSaving(false); }
   }
-  const [history, setHistory] = useState([]), [historyError, setHistoryError] = useState('');
-  const [historyLoading, setHistoryLoading] = useState(true), [expanded, setExpanded] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const heading = useRef(null);
-  useEffect(() => { heading.current?.focus(); setExpanded(false); setStatusFeedback(''); setStatusError(''); }, [task.id]);
-  useEffect(() => {
-    let active = true;
-    setHistoryLoading(true); setHistoryError(''); setHistory([]);
-    getTaskHistory(task.id).then(data => { if (active) setHistory(data); })
-      .catch(error => { if (active) setHistoryError(error.message); })
-      .finally(() => { if (active) setHistoryLoading(false); });
-    return () => { active = false; };
-  }, [task.id, task.updatedAt]);
+  useEffect(() => { heading.current?.focus(); setExpanded(false); setStatusFeedback(''); setStatusError(''); setHistoryOpen(false); }, [task.id]);
   const description = task.description || 'No description added yet.';
   const needsExpand = description.length > 900;
   return <article className="sysmon-task-detail" aria-label="Task detail">
     <div className="sysmon-detail-breadcrumb"><button className="sysmon-back-button" onClick={onBack}><ArrowLeft size={15} /> Back to tasks</button><span className="sysmon-muted">/</span><span className="sysmon-muted">{task.system || 'System monitoring'}</span><span className="sysmon-muted">/</span><span>{taskReference(task)}</span></div>
-    <div className="sysmon-detail-heading"><div><span className="sysmon-task-kind"><CircleDot size={13} />{task.type}</span><h1 ref={heading} tabIndex={-1} className="sysmon-detail-reference">{taskReference(task)}</h1><p className="sysmon-detail-subtitle">{task.title}</p></div><button className="sysmon-button" onClick={() => onEdit(task)}><Pencil size={15} /> Edit task</button></div>
+    <div className="sysmon-detail-heading"><div><span className="sysmon-task-kind"><CircleDot size={13} />{task.type}</span><h1 ref={heading} tabIndex={-1} className="sysmon-detail-reference">{taskReference(task)}</h1><p className="sysmon-detail-subtitle">{task.title}</p></div><div className="sysmon-task-actions"><button className="sysmon-history-trigger" aria-label="View activity history" title="Activity history" aria-haspopup="dialog" onClick={() => setHistoryOpen(true)}><History size={18}/></button><button className="sysmon-button" onClick={() => onEdit(task)}><Pencil size={15} /> Edit task</button></div></div>
     <dl className="sysmon-detail-properties">
       <Property icon={CircleDot} label="Status"><select className="sysmon-input sysmon-inline-status" aria-label="Task status" value={task.status} disabled={statusSaving} onChange={event => updateStatus(event.target.value)}>{statuses.map(status => <option key={status}>{status}</option>)}</select><span className="sysmon-inline-feedback" role="status">{statusSaving ? 'Saving…' : statusFeedback}</span>{statusError && <span className="sysmon-form-error" role="alert">{statusError}</span>}</Property>
       <Property icon={Users} label="Developer"><span className="sysmon-person-value">{task.developerName && <span className="sysmon-avatar">{task.developerName.split(' ').map(s => s[0]).slice(0, 2).join('')}</span>}{task.developerName || 'Unassigned'}</span></Property>
@@ -51,8 +42,6 @@ export default function TaskDetailView({ task, onBack, onEdit, onStatusChange })
     </section>
     <section className="sysmon-detail-section"><h2 className="sysmon-detail-section-title"><UserRoundCheck size={17} /> Testing</h2><dl className="sysmon-testing-fields"><Property icon={UserRoundCheck} label="Tester"><span className="sysmon-person-value">{task.testerName && <span className="sysmon-avatar sysmon-tester-avatar">{task.testerName.split(' ').map(s => s[0]).slice(0, 2).join('')}</span>}{task.testerName || 'Unassigned'}</span></Property></dl></section>
     <section className="sysmon-detail-section"><h2 className="sysmon-detail-section-title"><MessageSquare size={17} /> Progress & testing notes</h2><p className="sysmon-detail-description">{task.notes || 'No progress notes added yet.'}</p></section>
-    <section className="sysmon-detail-section"><h2 className="sysmon-detail-section-title"><History size={17} /> Activity history <span className="sysmon-count">{history.length}</span></h2>
-      {historyLoading ? <p className="sysmon-muted" role="status">Loading activity…</p> : historyError ? <p className="sysmon-form-error" role="alert">{historyError}</p> : history.length ? history.map(item => <div className="sysmon-activity-item" key={item.id}><span className="sysmon-activity-mark"><CircleDot size={15} /></span><div className="sysmon-activity-content"><div className="sysmon-activity-heading"><StatusBadge status={item.status} /><span className="sysmon-muted">{formatDate(item.changedAt)} · {item.actorId}</span></div><p className="sysmon-detail-description">{item.notes || 'Task details saved.'}</p></div></div>) : <p className="sysmon-muted">No activity recorded.</p>}
-    </section>
+    {historyOpen && <ActivityHistoryModal task={task} onClose={() => setHistoryOpen(false)} />}
   </article>;
 }
