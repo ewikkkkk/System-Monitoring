@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bug, RefreshCw, Rocket } from 'lucide-react';
 import { getBugOccurrences, getDeployments, getTaskResolutions, isMonitoringDemo } from '../services/api.js';
 import { buildBugTrend, compareDeployment } from '../services/bug-trends.js';
@@ -13,6 +13,14 @@ export default function BugTrends({ tasks, onOpenTask }) {
   const [resolutions,setResolutions]=useState([]);
   const [days,setDays]=useState(30),[system,setSystem]=useState(''),[selected,setSelected]=useState(''),[deploymentId,setDeploymentId]=useState('');
   const [now,setNow]=useState(()=>new Date());
+  const chartHost=useRef(null),[chartWidth,setChartWidth]=useState(940);
+  useEffect(()=>{
+    const node=chartHost.current;if(!node)return;
+    const measure=()=>setChartWidth(Math.max(260,Math.round(node.getBoundingClientRect().width)));
+    measure();
+    if(typeof ResizeObserver==='undefined'){window.addEventListener('resize',measure);return()=>window.removeEventListener('resize',measure);}
+    const observer=new ResizeObserver(measure);observer.observe(node);return()=>observer.disconnect();
+  },[]);
   async function load(){setLoading(true);setError('');try{const [events,releases,resolved]=await Promise.all([getBugOccurrences(),getDeployments(),getTaskResolutions()]);setOccurrences(events);setDeployments(releases);setResolutions(resolved);setNow(new Date());}catch(error){setError(error.message);}finally{setLoading(false);}}
   useEffect(()=>{load();},[]);
   const systems=[...new Set(tasks.map(task=>task.system).filter(Boolean))].sort();
@@ -22,8 +30,8 @@ export default function BugTrends({ tasks, onOpenTask }) {
   const deployment=trend.releases.find(event=>event.id===Number(deploymentId));
   const comparison=deployment?compareDeployment(trend.events,deployment,now):null;
   const max=Math.max(4,...trend.rows.map(row=>Math.max(row.entries.length,row.resolved.length))),step=Math.max(1,Math.ceil(max/4)),top=step*4;
-  const width=940,height=252,left=34,right=16,baseline=210,plotHeight=170,band=(width-left-right)/days;
-  return <section className="sysmon-report-section sysmon-bug-trends" aria-labelledby="sysmon-bug-trends-title">
+  const width=chartWidth,height=252,left=34,right=22,baseline=210,plotHeight=170,band=(width-left-right)/days;
+  return <section ref={chartHost} className="sysmon-report-section sysmon-bug-trends" aria-labelledby="sysmon-bug-trends-title">
     <div className="sysmon-report-heading"><div><h2 id="sysmon-bug-trends-title" className="sysmon-panel-title"><Bug size={17}/> Bug activity & resolutions</h2><p className="sysmon-panel-description">Daily bug reports and resolved bugs/enhancements, with production markers. Current task filters apply.</p></div><div className="sysmon-trend-controls"><select className="sysmon-input" aria-label="Bug trend date range" value={days} onChange={event=>{setDays(Number(event.target.value));setSelected('');}}>{[7,14,30,90].map(value=><option value={value} key={value}>Last {value} days</option>)}</select><select className="sysmon-input" aria-label="Bug trend system" value={activeSystem} onChange={event=>{setSystem(event.target.value);setDeploymentId('');}}><option value="">All systems</option>{systems.map(value=><option key={value}>{value}</option>)}</select><button className="sysmon-button" aria-label="Refresh bug activity" onClick={load} disabled={loading}><RefreshCw size={15}/></button></div></div>
     {loading?<p className="sysmon-muted" role="status">Loading bug activity…</p>:error?<p className="sysmon-form-error" role="alert">{error} <button className="sysmon-button" onClick={load}>Retry</button></p>:<>
       <div className="sysmon-pending-totals" aria-label="Current pending totals"><div><span className="sysmon-muted">Pending bugs</span><strong>{trend.pendingBugs}</strong></div><div><span className="sysmon-muted">Pending enhancements</span><strong>{trend.pendingEnhancements}</strong></div><div><span className="sysmon-muted">Total pending</span><strong>{trend.pendingBugs+trend.pendingEnhancements}</strong></div><p className="sysmon-report-note">Current filters · all dates · excludes Prod live and Closed</p></div>
@@ -35,10 +43,11 @@ export default function BugTrends({ tasks, onOpenTask }) {
           <rect x={x-band/2+1} y={26} width={Math.max(1,band-2)} height={baseline-26} className={row.key===day.key?'sysmon-chart-selected':'sysmon-chart-hit'}/>
           {day.releases.length>0&&<><line x1={x} x2={x} y1={25} y2={baseline} className="sysmon-chart-release-line"/><path d={`M${x},15 l5,5 l-5,5 l-5,-5 z`} className="sysmon-chart-release"/></>}
           <rect x={x-bar-1} y={baseline-newHeight} width={bar} height={newHeight} rx={2} className="sysmon-chart-new"/><rect x={x-bar-1} y={baseline-newHeight-recurHeight} width={bar} height={recurHeight} rx={2} className="sysmon-chart-recurrence"/><rect x={x+1} y={baseline-resolvedHeight} width={bar} height={resolvedHeight} rx={2} className="sysmon-chart-resolved"/>
-          {(index===0||index===days-1||index%Math.max(1,Math.ceil(days/7))===0)&&<text x={x} y={235} textAnchor="middle" className="sysmon-chart-label">{dayLabel(day.date)}</text>}
+          {(index===0||index===days-1||index%Math.max(1,Math.ceil(days/(width<520?4:7)))===0)&&<text x={x} y={235} textAnchor="middle" className="sysmon-chart-label">{dayLabel(day.date)}</text>}
           <title>{day.key}: {day.entries.length} bug reports; {day.resolved.length} resolved tasks; {day.releases.length} production events</title>
         </g>;})}
       </svg>
+      <label className="sysmon-chart-date-control sysmon-field">Activity date<input className="sysmon-input" type="date" min={trend.rows[0].key} max={trend.rows.at(-1).key} value={row.key} onChange={event=>{if(trend.rows.some(row=>row.key===event.target.value))setSelected(event.target.value);}}/></label>
       {!trend.total&&!trend.resolvedBugs&&!trend.resolvedEnhancements&&<p className="sysmon-muted">No bug reports or resolutions recorded in this date range for the current filters.</p>}
       <div className="sysmon-trend-day-detail" aria-live="polite"><div className="sysmon-trend-day-heading"><strong>{dayLabel(row.date)}</strong><span className="sysmon-muted">{row.newBugs} new · {row.recurrences} recurring · {row.resolvedBugs} bugs / {row.resolvedEnhancements} enhancements resolved · {row.releases.length} production {row.releases.length===1?'event':'events'}</span></div>
         {row.entries.map(event=><div key={event.key} className="sysmon-trend-entry"><span className="sysmon-muted">{event.kind}</span><button className="sysmon-tool-text" onClick={()=>onOpenTask(event.task)}>{taskReference(event.task)} · {event.task.title}</button>{event.reference&&<a className="sysmon-ticket-link" href={getHelpDeskTicketUrl(event.reference)} target="_blank" rel="noopener noreferrer">{event.reference}</a>}</div>)}

@@ -8,9 +8,10 @@ import BugTrends from '../components/BugTrends.jsx';
 const rate = value => value == null ? '—' : value + '%';
 const hours = value => Number(value.toFixed(2)) + ' h';
 function ReportTable({ label, headings, children }) {
-  return <table className="sysmon-report-table" aria-label={label}><thead><tr>{headings.map(h => <th className="sysmon-report-th" scope="col" key={h}>{h}</th>)}</tr></thead><tbody>{children}</tbody></table>;
+  const rows=React.Children.map(children,row=>React.isValidElement(row)?React.cloneElement(row,{},React.Children.map(row.props.children,(cell,index)=>React.isValidElement(cell)?React.cloneElement(cell,{'data-label':headings[index]}):cell)):row);
+  return <table className="sysmon-report-table" aria-label={label}><thead><tr>{headings.map(h => <th className="sysmon-report-th" scope="col" key={h}>{h}</th>)}</tr></thead><tbody>{rows}</tbody></table>;
 }
-function Cell({ children }) { return <td className="sysmon-report-td">{children}</td>; }
+function Cell({ children, ...props }) { return <td className="sysmon-report-td" {...props}>{children}</td>; }
 
 export default function OverviewView({ tasks, people, onEdit, onSelectStatus }) {
   const report = buildOverviewReport(tasks, people);

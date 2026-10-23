@@ -296,3 +296,144 @@
 @media(max-width:850px){.sysmon-list-item{grid-template-columns:minmax(160px,2fr) 1fr 1fr}.sysmon-list-item .sysmon-priority{justify-self:start}.sysmon-overview-panel{padding:20px 0}}
 
 @media(max-width:600px){.sysmon-layout{padding:0}.sysmon-theme-toggle{max-width:180px;margin-top:16px}.sysmon-list-item{grid-template-columns:1fr 1fr}.sysmon-list-item .sysmon-task-button{grid-column:1/-1}}
+
+/* Page-scoped responsive layouts. Tables reflow instead of adding nested scrollers. */
+.sysmon-layout{grid-auto-rows:max-content;align-content:start}
+.sysmon-report-table,.sysmon-voucher-table{position:relative}
+.sysmon-voucher-tools{position:relative;margin-bottom:8px}
+.sysmon-voucher-tools .sysmon-tool-popover{left:0;right:auto}
+.sysmon-voucher-controls .sysmon-tool-actions{justify-content:flex-start}
+.sysmon-voucher-heading,.sysmon-voucher-actions{min-width:0;flex-wrap:wrap}
+.sysmon-voucher-tools .sysmon-quick-search{margin-left:0}
+.sysmon-chart-date-control{display:none}
+.sysmon-content{container-type:inline-size}
+.sysmon-field,.sysmon-view-panel,.sysmon-report-section,.sysmon-calendar-toolbar,.sysmon-task-actions{min-width:0}
+.sysmon-field .sysmon-input{min-width:0;max-width:100%;width:100%}
+.sysmon-task-title,.sysmon-note,.sysmon-trend-entry,.sysmon-detail-subtitle,.sysmon-module-title,.sysmon-view-label,.sysmon-history-item{overflow-wrap:anywhere}
+.sysmon-task-actions{flex-wrap:wrap}
+.sysmon-trend-entry .sysmon-tool-text{max-width:100%;overflow-wrap:anywhere;text-align:left}
+.sysmon-trend-comparison-select{min-width:0}
+.sysmon-trend-comparison-select .sysmon-input{width:100%;max-width:100%;min-width:0}
+.sysmon-trend-controls .sysmon-input{min-width:0;max-width:100%}
+
+@container(max-width:760px){
+  .sysmon-report-table,.sysmon-report-table tbody{display:block;width:100%}
+  .sysmon-report-table thead{position:absolute;top:0;left:0;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  .sysmon-report-table tbody tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 20px;padding:16px 0;border-bottom:1px solid var(--sm-border)}
+  .sysmon-report-table .sysmon-report-th,.sysmon-report-table .sysmon-report-td{display:block;padding:0;border:0;text-align:left;white-space:normal;min-width:0;overflow-wrap:anywhere}
+  .sysmon-report-table tbody .sysmon-report-th{grid-column:1/-1;font-weight:600;font-size:13px;color:var(--sm-text)}
+  .sysmon-report-table .sysmon-report-td::before{content:attr(data-label);display:block;color:var(--sm-muted);font-size:11px;margin-bottom:3px;font-weight:400}
+  .sysmon-report-table td[colspan]{grid-column:1/-1}
+  .sysmon-report-table td[colspan]::before{display:none}
+  .sysmon-report-total{padding:16px 10px}
+  .sysmon-report-task-row{grid-template-columns:minmax(0,1fr);gap:9px}
+  .sysmon-voucher-table,.sysmon-voucher-table tbody{display:block;width:100%}
+  .sysmon-voucher-table thead{position:absolute;top:0;left:0;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  .sysmon-voucher-table tbody tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px;padding:20px 0;border-bottom:1px solid var(--sm-border)}
+  .sysmon-voucher-table td{display:block;padding:0;border:0;min-width:0;font-size:12px}
+  .sysmon-voucher-table td::before{content:attr(data-label);display:block;font-size:10px;color:var(--sm-muted);margin-bottom:4px}
+  .sysmon-voucher-table .sysmon-voucher-code-cell{order:-2;font-size:14px}
+  .sysmon-voucher-table .sysmon-voucher-status-cell{order:-1;text-align:right}
+  .sysmon-voucher-table .sysmon-voucher-detail-cell,.sysmon-voucher-table .sysmon-voucher-action-cell{grid-column:1/-1}
+  .sysmon-voucher-row-actions{gap:9px}
+  .sysmon-voucher-row-actions .sysmon-button{min-height:40px}
+}
+
+@media(max-width:1100px) and (min-width:761px){
+  .sysmon-layout{grid-template-columns:170px minmax(0,1fr)}
+  .sysmon-sidebar{padding:24px 10px}
+  .sysmon-sidebar-brand{font-size:12px;margin-left:2px;margin-right:2px}
+  .sysmon-content{padding:24px}
+  .sysmon-detail-heading{gap:16px;flex-wrap:wrap}
+}
+
+@media(max-width:760px){
+  .sysmon-layout{grid-template-columns:minmax(0,1fr);padding:0}
+  .sysmon-sidebar{position:sticky;top:0;z-index:30;align-self:start;min-height:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 4px;padding:14px 12px 8px;border-right:0;border-bottom:1px solid var(--sm-border)}
+  .sysmon-sidebar-brand{grid-column:1/-1;margin:0;padding-right:48px;font-size:13px;min-width:0}
+  .sysmon-sidebar-label,.sysmon-sidebar-note,.sysmon-sidebar-create{display:none}
+  .sysmon-sidebar-nav{display:contents}
+  .sysmon-sidebar-link{flex-direction:column;justify-content:center;gap:4px;padding:7px 3px;font-size:11px;text-align:center;min-height:56px;line-height:1.3;min-width:0;position:relative}
+  .sysmon-sidebar-link .sysmon-count{position:absolute;right:5px;top:3px;margin:0;font-size:9px;padding:0 4px}
+  .sysmon-theme-toggle{position:absolute;right:12px;top:14px;width:40px;height:40px;min-height:40px;margin:0;padding:0;border:1px solid var(--sm-border);border-radius:6px;justify-content:center}
+  .sysmon-theme-toggle span{display:none}
+  .sysmon-content{padding:20px 16px 36px;min-width:0}
+  .sysmon-demo-banner{margin-bottom:18px;font-size:11px;padding:8px 10px}
+  .sysmon-primary,.sysmon-button,.sysmon-tool-pill,.sysmon-tool-icon,.sysmon-status-option{min-height:44px}
+  .sysmon-tool-icon{width:40px}
+  .sysmon-tool-pill{padding:7px 10px;font-size:12px}
+  .sysmon-tool-create{padding:8px 12px;font-size:12px}
+  .sysmon-tool-actions{gap:8px;justify-content:flex-start;max-width:100%}
+  .sysmon-compact-toolbar{align-items:flex-start;gap:12px}
+  .sysmon-compact-toolbar>.sysmon-tool-actions{width:100%}
+  .sysmon-tool-anchor{position:static}
+  .sysmon-task-tools,.sysmon-voucher-tools{position:relative}
+  .sysmon-tool-popover,.sysmon-voucher-tools .sysmon-tool-popover{top:100%;left:0;right:auto;width:280px;max-width:100%;z-index:40}
+  .sysmon-status-menu{width:240px}
+  .sysmon-popover-heading .sysmon-tool-icon{min-height:36px;height:36px;width:36px}
+  .sysmon-popover-footer .sysmon-button{min-height:40px;padding:8px 14px;font-size:12px}
+  .sysmon-filter-chip{min-height:32px;max-width:100%;font-size:11px;padding:4px 8px}
+  .sysmon-tool-text{font-size:12px}
+  .sysmon-search-input{min-width:0;font-size:16px}
+  .sysmon-quick-search{max-width:none;margin-left:0}
+  .sysmon-input{font-size:16px;min-height:44px;max-width:100%;min-width:0}
+  .sysmon-form{grid-template-columns:minmax(0,1fr);gap:14px}
+  .sysmon-form-actions{flex-wrap:wrap}
+  .sysmon-form-actions>.sysmon-button,.sysmon-form-actions>.sysmon-primary{flex:1 1 120px;white-space:normal}
+  .sysmon-task-dialog{width:calc(100vw - 16px);max-height:calc(100dvh - 16px);padding:18px;border-radius:8px}
+  .sysmon-task-dialog .sysmon-editor-heading{position:sticky;top:-18px;z-index:2;background:var(--sm-panel);padding:10px 0;margin-bottom:18px;gap:12px}
+  .sysmon-task-dialog .sysmon-editor-heading>.sysmon-button{flex-shrink:0}
+  .sysmon-task-dialog .sysmon-editor-title{font-size:17px;overflow-wrap:anywhere}
+  .sysmon-task-type{gap:8px}
+  .sysmon-type-choice{flex:1;justify-content:center;min-height:44px;padding:5px 10px;box-sizing:border-box}
+  .sysmon-task-detail{padding:0;min-width:0}
+  .sysmon-detail-heading{gap:16px;flex-wrap:wrap;margin-bottom:24px}
+  .sysmon-task-actions{gap:10px}
+  .sysmon-detail-properties{grid-template-columns:minmax(0,1fr);gap:18px}
+  .sysmon-detail-property{grid-template-columns:105px minmax(0,1fr);gap:10px;align-items:start}
+  .sysmon-detail-value .sysmon-input{width:100%;min-width:0}
+  .sysmon-detail-breadcrumb{margin-bottom:24px}
+  .sysmon-inline-feedback{display:block;margin:4px 0}
+  .sysmon-flat-list-head{display:none}
+  .sysmon-flat-list-row{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px}
+  .sysmon-flat-list-row .sysmon-task-button{grid-column:1/-1}
+  .sysmon-flat-mobile-label{display:block}
+  .sysmon-report-heading{gap:14px}
+  .sysmon-report-section{padding:20px 0}
+  .sysmon-panel-title{font-size:15px}
+  .sysmon-trend-controls{display:grid;grid-template-columns:minmax(0,1fr) auto;width:100%;gap:8px}
+  .sysmon-trend-controls .sysmon-input:nth-child(2){grid-row:2;grid-column:1/-1;width:100%}
+  .sysmon-trend-controls .sysmon-button{grid-column:2;grid-row:1}
+  .sysmon-pending-totals{gap:18px;justify-content:space-between;margin:18px 0;padding:14px 0}
+  .sysmon-pending-totals div{flex:1 1 80px}
+  .sysmon-pending-totals p{margin:0;max-width:none;flex-basis:100%}
+  .sysmon-pending-totals strong{font-size:24px}
+  .sysmon-trend-summary{gap:12px 20px;align-items:baseline}
+  .sysmon-trend-summary strong,.sysmon-trend-comparison strong{font-size:20px}
+  .sysmon-trend-chart{max-height:none}
+  .sysmon-trend-legend{gap:9px 14px;line-height:1.5}
+  .sysmon-chart-date-control{display:flex;max-width:220px;margin:8px 0 18px}
+  .sysmon-trend-day-heading{align-items:flex-start;flex-direction:column;gap:5px}
+  .sysmon-trend-comparison{align-items:flex-start;flex-direction:column;gap:12px}
+  .sysmon-trend-entry{gap:6px 10px;overflow-wrap:anywhere}
+  .sysmon-voucher-heading{align-items:flex-start;gap:12px;margin-bottom:18px}
+  .sysmon-voucher-heading>.sysmon-voucher-actions{width:100%;display:grid;grid-template-columns:auto minmax(0,1fr) minmax(0,1fr);gap:8px}
+  .sysmon-voucher-heading .sysmon-button,.sysmon-voucher-heading .sysmon-primary{padding:8px;font-size:12px;white-space:normal}
+  .sysmon-voucher-controls{gap:12px;align-items:center}
+  .sysmon-voucher-controls>.sysmon-muted{flex-basis:100%}
+  .sysmon-calendar-toolbar>.sysmon-tool-actions{width:100%}
+  .sysmon-calendar-monthbar{flex-wrap:wrap;gap:14px}
+  .sysmon-calendar-monthbar .sysmon-panel-title{font-size:15px;margin:0 4px}
+  .sysmon-calendar-day,.sysmon-calendar-blank{min-height:62px}
+  .sysmon-calendar-day{padding:5px 4px;gap:5px}
+  .sysmon-calendar-day-count{font-size:10px}
+  .sysmon-calendar-count-text{display:none}
+  .sysmon-calendar-dots{gap:3px}
+  .sysmon-calendar-dots .sysmon-dot{width:5px;height:5px}
+  .sysmon-deployment-heading,.sysmon-deployment-footer{gap:10px;overflow-wrap:anywhere}
+  .sysmon-summary-actions{flex-wrap:wrap}
+  .sysmon-summary-actions>.sysmon-primary,.sysmon-summary-actions>.sysmon-button{flex:1 1 120px}
+  .sysmon-deployment-report{padding:12px;font-size:11px;overflow-wrap:anywhere}
+  .sysmon-footer{font-size:11px;align-items:flex-start}
+  .sysmon-helpdesk-page{padding:24px 16px}
+}
