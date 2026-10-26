@@ -1,7 +1,7 @@
 import React from 'react';
-import { Activity, LayoutDashboard, List, CalendarDays, Plus, Moon, Sun, TicketCheck } from 'lucide-react';
+import { Activity, LayoutDashboard, List, CalendarDays, Plus, Moon, Sun, TicketCheck, FileText } from 'lucide-react';
 
-const views = [['overview', 'Overview', LayoutDashboard], ['list', 'List', List], ['calendar', 'Calendar', CalendarDays]];
+const views = [['overview', 'Overview', LayoutDashboard], ['list', 'List', List], ['calendar', 'Calendar', CalendarDays], ['ticket-reports', 'Daily reports', FileText]];
 
 // Module navigation requested for local use; the host can move this into its sidebar.
 export default function ModuleSidebar({ view, taskOpen, taskCount, onNavigate, onCreate, disabled, darkMode, onToggleDarkMode }) {

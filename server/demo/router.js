@@ -7,13 +7,54 @@ import { validRelatedTickets } from '../../shared/related-tickets.js';
 import { validBugOccurrence } from '../bug-validation.js';
 import { validTaskSystem, validTaskModule } from '../../shared/task-fields.js';
 import { taskResolutions } from '../../shared/task-resolutions.js';
+import { prepareTicketReport, ticketReportSummary } from '../ticket-report-validation.js';
+import { createDemoTeamsRepository } from '../teams/repositories.js';
+import { teamsStatus, prepareTeamsReport, sendTeamsReport } from '../teams/delivery.js';
 
 const statuses = ['Open', 'In progress', 'In testing', 'Ready for release', 'Prod live', 'Closed'];
 const completed = status => ['Prod live', 'Closed'].includes(status);
 export function createDemoMonitoringRouter(store) {
   const r = Router();
+  r.use('/ticket-reports',json({limit:'3mb'}));
   r.use(json({ limit: '100kb' }));
   r.use((req, res, next) => { res.set('X-System-Monitoring-Mode', 'demo'); next(); });
+  const teamsRepository=createDemoTeamsRepository(store);
+  r.get('/ticket-reports/:id/teams',async(req,res)=>{
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    const report=teamsReport(req,res);if(!report)return;
+    res.json(await teamsStatus(report,req.app.locals.systemMonitoringTeams,teamsRepository));
+  });
+  r.post('/ticket-reports/:id/teams/preview',async(req,res)=>{
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    const report=teamsReport(req,res);if(!report)return;
+    const result=await prepareTeamsReport(report,req.app.locals.systemMonitoringTeams,req.body?.destinationId,String(req.user.userId));res.status(result.status).json(result);
+  });
+  r.post('/ticket-reports/:id/teams/send',async(req,res)=>{
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    const report=teamsReport(req,res);if(!report)return;
+    const result=await sendTeamsReport({report,service:req.app.locals.systemMonitoringTeams,repository:teamsRepository,destinationId:req.body?.destinationId,previewHash:req.body?.previewHash,actorId:String(req.user.userId)});res.status(result.status).json(result);
+  });
+  function teamsReport(req,res){
+    const id=Number(req.params.id);if(!Number.isSafeInteger(id)||id<1||id>2147483647){res.status(400).json({error:'Invalid report ID'});return;}
+    const report=(store.snapshot().ticketReports||[]).find(report=>report.id===id);if(!report){res.status(404).json({error:'Report not found'});return;}return report;
+  }
+  r.get('/ticket-reports',(req,res)=>res.json((store.snapshot().ticketReports||[]).map(ticketReportSummary).sort((a,b)=>b.reportDate.localeCompare(a.reportDate)||b.asOfTime.localeCompare(a.asOfTime)||b.id-a.id)));
+  r.get('/ticket-reports/:id',(req,res)=>{
+    const id=Number(req.params.id);if(!Number.isSafeInteger(id)||id<1||id>2147483647)return res.status(400).json({error:'Invalid report ID'});
+    const report=(store.snapshot().ticketReports||[]).find(report=>report.id===id);
+    if(!report)return res.status(404).json({error:'Report not found'});
+    const {requestId,...view}=report;res.json(view);
+  });
+  r.post('/ticket-reports',async(req,res)=>{
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    let report;try{report=prepareTicketReport(req.body);}catch(error){return res.status(400).json({error:error.message});}
+    const result=await store.update(state=>{
+      state.ticketReports||=[];const old=state.ticketReports.find(row=>row.requestId===req.body.requestId);if(old)return old;
+      const saved={...report,id:Math.max(0,...state.ticketReports.map(row=>row.id))+1,requestId:req.body.requestId,actorId:String(req.user.userId),createdAt:new Date().toISOString()};
+      state.ticketReports.push(saved);return saved;
+    });
+    const {requestId,...view}=result;res.status(201).json(view);
+  });
   r.get('/people', (req, res) => res.json(store.snapshot().people));
   r.get('/tasks', (req, res) => {
     const { tasks, people } = store.snapshot();
@@ -208,6 +249,7 @@ export function createDemoMonitoringRouter(store) {
     res.status(id ? 200 : 201).json(result);
   }
   r.use((error, req, res, next) => {
+    if(error.type==='entity.too.large')return res.status(413).json({error:'Request is too large. Import fewer ticket rows.'});
     console.error('Demo request failed:', error.code || error.name);
     res.status(error.type === 'entity.parse.failed' ? 400 : 500).json({ error: error.type === 'entity.parse.failed' ? 'Invalid JSON body' : 'Could not save the local demo database' });
   });

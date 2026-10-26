@@ -1,0 +1,28 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import express from 'express';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { createDemoStore } from './store.js';
+import { createDemoMonitoringRouter } from './router.js';
+test('daily reports persist immutable versions, recompute totals and ignore caller identity',async t=>{
+  const dir=await mkdtemp(join(tmpdir(),'sysmon-reports-')),file=join(dir,'demo.json'),store=await createDemoStore(file),app=express();
+  app.use((req,res,next)=>{req.user={userId:'trusted-host'};next();});app.use(createDemoMonitoringRouter(store));
+  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+  t.after(async()=>{await new Promise(resolve=>server.close(resolve));await rm(dir,{recursive:true,force:true});});
+  const base=`http://127.0.0.1:${server.address().port}`;
+  const body={requestId:randomUUID(),reportDate:'2026-10-23',asOfTime:'14:20',timeZone:'Asia/Manila',sourceName:'tickets.xlsx',sheetName:'Tickets',actorId:'forged',totals:{total:999},html:'<script>bad</script>',tickets:[{ticketId:'METS-1',subject:'Test',assignee:'Alex',status:'Open'}]};
+  const post=async value=>{const response=await fetch(base+'/ticket-reports',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(value)});return{status:response.status,body:await response.json()};};
+  const saved=await post(body);assert.equal(saved.status,201);assert.equal(saved.body.totals.total,1);assert.equal(saved.body.actorId,'trusted-host');assert.ok(!saved.body.html.includes('<script>'));
+  assert.equal((await post(body)).body.id,saved.body.id);
+  const second=await post({...body,requestId:randomUUID(),asOfTime:'15:00',tickets:[{...body.tickets[0],status:'Closed'}]});assert.notEqual(second.body.id,saved.body.id);
+  const list=await(await fetch(base+'/ticket-reports')).json();assert.equal(list.length,2);assert.equal(list[0].unfinished,0);assert.equal(list[1].unfinished,1);
+  assert.ok(!Object.hasOwn(list[0],'tickets'));
+  const reloaded=await createDemoStore(file);assert.equal(reloaded.snapshot().ticketReports[0].totals.unfinished,1);assert.equal(reloaded.snapshot().ticketReports.length,2);
+  const original=await(await fetch(base+`/ticket-reports/${saved.body.id}`)).json();assert.equal(original.totals.unfinished,1);
+  assert.equal((await post({...body,requestId:randomUUID(),tickets:[{ticketId:'METS-1'}]})).status,400);
+  const untrusted=express();untrusted.use(createDemoMonitoringRouter(store));const noUser=untrusted.listen(0,'127.0.0.1');await new Promise(resolve=>noUser.once('listening',resolve));t.after(()=>new Promise(resolve=>noUser.close(resolve)));
+  assert.equal((await fetch(`http://127.0.0.1:${noUser.address().port}/ticket-reports`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).status,401);
+});

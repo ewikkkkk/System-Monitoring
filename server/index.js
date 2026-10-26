@@ -6,13 +6,76 @@ import { validVoucher, validVoucherUsage, validVoucherImport } from './voucher-v
 import { readRelatedTickets, validRelatedTickets } from '../shared/related-tickets.js';
 import { validBugOccurrence } from './bug-validation.js';
 import { taskSystems, validTaskModule } from '../shared/task-fields.js';
+import { prepareTicketReport } from './ticket-report-validation.js';
+import { sqlTeamsRepository } from './teams/repositories.js';
+import { teamsStatus, prepareTeamsReport, sendTeamsReport } from './teams/delivery.js';
 
 const statuses = ['Open', 'In progress', 'In testing', 'Ready for release', 'Prod live', 'Closed'];
 const priorities = ['Low', 'Normal', 'High', 'Urgent'];
 export function createSystemMonitoringRouter(getPool) {
   const r = Router();
   r.use((req, res, next) => withPool(getPool, next));
+  r.use('/ticket-reports', json({ limit: '3mb' }));
   r.use(json({ limit: '100kb' }));
+  // Host: Teams status/preview and send require authorized Help Desk reporters/team leads.
+  // The host supplies app.locals.systemMonitoringTeams and the delegated token getter; no module-owned login.
+  r.get('/ticket-reports/:id/teams',async(req,res)=>{
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    const report=await teamsReport(req,res);if(!report)return;
+    res.json(await teamsStatus(report,req.app.locals.systemMonitoringTeams,sqlTeamsRepository));
+  });
+  r.post('/ticket-reports/:id/teams/preview',async(req,res)=>{
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    const report=await teamsReport(req,res);if(!report)return;
+    const result=await prepareTeamsReport(report,req.app.locals.systemMonitoringTeams,req.body?.destinationId,String(req.user.userId));res.status(result.status).json(result);
+  });
+  r.post('/ticket-reports/:id/teams/send',async(req,res)=>{
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    const report=await teamsReport(req,res);if(!report)return;
+    const result=await sendTeamsReport({report,service:req.app.locals.systemMonitoringTeams,repository:sqlTeamsRepository,destinationId:req.body?.destinationId,previewHash:req.body?.previewHash,actorId:String(req.user.userId)});res.status(result.status).json(result);
+  });
+  async function teamsReport(req,res){
+    const id=Number(req.params.id);if(!Number.isSafeInteger(id)||id<1||id>2147483647){res.status(400).json({error:'Invalid report ID'});return;}
+    const result=await query('SELECT id,snapshotJson FROM monitoring.TicketReports WHERE id=@id',{id:{type:sql.Int,value:id}});
+    const row=result.recordset[0];if(!row){res.status(404).json({error:'Report not found'});return;}
+    return {...JSON.parse(row.snapshotJson),id:row.id};
+  }
+  // Host: report reads require Help Desk monitoring viewers; saves require Help Desk reporters/team leads.
+  r.get('/ticket-reports',async(req,res)=>{
+    const result=await query(`SELECT id,CONVERT(char(10),reportDate,23) AS reportDate,asOfTime,timeZone,sourceName,sheetName,
+      total,unfinished,openCount AS [open],waiting,pending,internalCount AS internal,resolved,closed,overdue,actorId,createdAt
+      FROM monitoring.TicketReports ORDER BY reportDate DESC,asOfTime DESC,id DESC`);
+    res.json(result.recordset);
+  });
+  r.get('/ticket-reports/:id',async(req,res)=>{
+    const id=Number(req.params.id);
+    if(!Number.isSafeInteger(id)||id<1||id>2147483647)return res.status(400).json({error:'Invalid report ID'});
+    const result=await query('SELECT id,snapshotJson,actorId,createdAt FROM monitoring.TicketReports WHERE id=@id',{id:{type:sql.Int,value:id}});
+    const row=result.recordset[0];if(!row)return res.status(404).json({error:'Report not found'});
+    res.json({...JSON.parse(row.snapshotJson),id:row.id,actorId:row.actorId,createdAt:row.createdAt});
+  });
+  r.post('/ticket-reports',async(req,res)=>{
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    let report;try{report=prepareTicketReport(req.body);}catch(error){return res.status(400).json({error:error.message});}
+    const t=report.totals,params={
+      requestId:{type:sql.UniqueIdentifier,value:req.body.requestId},reportDate:{type:sql.Date,value:report.reportDate},asOfTime:{type:sql.Char(5),value:report.asOfTime},
+      zone:{type:sql.NVarChar(80),value:report.timeZone},source:{type:sql.NVarChar(200),value:report.sourceName},sheet:{type:sql.NVarChar(100),value:report.sheetName},
+      snapshot:{type:sql.NVarChar(sql.MAX),value:JSON.stringify(report)},actor:{type:sql.NVarChar(128),value:String(req.user.userId)},
+      ...Object.fromEntries(Object.entries(t).map(([name,value])=>[name,{type:sql.Int,value}]))
+    };
+    const result=await query(`SET XACT_ABORT ON; BEGIN TRY BEGIN TRANSACTION;
+      DECLARE @id int;
+      SELECT @id=id FROM monitoring.TicketReports WITH(UPDLOCK,HOLDLOCK) WHERE requestId=@requestId;
+      IF @id IS NULL BEGIN
+        INSERT monitoring.TicketReports(requestId,reportDate,asOfTime,timeZone,sourceName,sheetName,total,unfinished,openCount,waiting,pending,internalCount,resolved,closed,overdue,snapshotJson,actorId)
+          VALUES(@requestId,@reportDate,@asOfTime,@zone,@source,@sheet,@total,@unfinished,@open,@waiting,@pending,@internal,@resolved,@closed,@overdue,@snapshot,@actor);
+        SET @id=SCOPE_IDENTITY();
+      END;
+      COMMIT;
+      SELECT id,snapshotJson,actorId,createdAt FROM monitoring.TicketReports WHERE id=@id;
+      END TRY BEGIN CATCH IF @@TRANCOUNT>0 ROLLBACK; THROW; END CATCH`,params);
+    const row=result.recordset[0];res.status(201).json({...JSON.parse(row.snapshotJson),id:row.id,actorId:row.actorId,createdAt:row.createdAt});
+  });
   // Host must restrict the entire router to authorized monitoring team members.
   // Writes additionally require developer, tester, or team-lead permission at host level.
   r.get('/people', async (req, res) => {
@@ -250,6 +313,7 @@ export function createSystemMonitoringRouter(getPool) {
     res.status(id ? 200 : 201).json(result.recordset[0]);
   }
   r.use((error, req, res, next) => {
+    if(error.type==='entity.too.large')return res.status(413).json({error:'Request is too large. Import fewer ticket rows.'});
     if(error.number===50003) return res.status(404).json({error:'Voucher not found'});
     if(error.number===50004) return res.status(409).json({error:'Voucher is no longer active. Refresh the inventory.'});
     if(error.number===50005) return res.status(409).json({error:'Only a location-mismatch voucher can be returned to active inventory'});

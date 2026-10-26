@@ -3,6 +3,9 @@ import { createServer as createViteServer } from 'vite';
 import { createSystemMonitoringRouter } from './index.js';
 import { createDevPool } from './db/pool.js';
 import { fileURLToPath } from 'node:url';
+import { readFile } from 'node:fs/promises';
+import { createTeamsService } from './teams/graph.js';
+import { getReportTicketUrl } from '../src/services/api.js';
 
 let poolPromise;
 const getPool = () => {
@@ -14,6 +17,11 @@ const getPool = () => {
   return poolPromise;
 };
 const app = express();
+// Optional local-only setup. Production uses the host's per-user delegated token getter.
+if(process.env.TEAMS_CHAT_ID&&process.env.TEAMS_CHAT_NAME&&process.env.TEAMS_GRAPH_ACCESS_TOKEN){
+  let aliases={};try{aliases=JSON.parse(await readFile(new URL('../.local/teams-assignees.json',import.meta.url),'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;}
+  app.locals.systemMonitoringTeams=createTeamsService({getAccessToken:async()=>process.env.TEAMS_GRAPH_ACCESS_TOKEN,destinations:[{id:'daily-reports',name:process.env.TEAMS_CHAT_NAME,chatId:process.env.TEAMS_CHAT_ID}],aliases,resolveTicketUrl:getReportTicketUrl});
+}
 const demo = process.argv.includes('--demo');
 let router;
 if (demo) {

@@ -12,6 +12,7 @@ import TaskToolbar from './components/TaskToolbar.jsx';
 import { blankTask as blank, isComplete, taskReference } from './task-utils.js';
 import HelpDeskTicketPage from './views/HelpDeskTicketPage.jsx';
 import VoucherView from './views/VoucherView.jsx';
+import TicketReportsView from './views/TicketReportsView.jsx';
 import { listTasksForStatus, parseRelatedTickets } from '../shared/related-tickets.js';
 
 export default function SystemMonitoringPage(props) {
@@ -66,7 +67,7 @@ function MonitoringWorkspace({ darkMode = false, onToggleDarkMode, onToggleSideb
     <ModuleSidebar view={view} taskOpen={!!selectedTask} taskCount={unfinishedTasks.length} onNavigate={navigate} onCreate={() => edit()} disabled={loading || !!error} darkMode={activeDarkMode} onToggleDarkMode={toggleDarkMode} />
     <div className="sysmon-content">
     {isMonitoringDemo() && <div className="sysmon-demo-banner" role="status">Demo workspace · Sample people and tasks · Changes are saved locally</div>}
-    {selectedTask ? <TaskDetailView task={selectedTask} onBack={() => setSelectedId(null)} onEdit={edit} onStatusChange={updateTaskStatus} onRefresh={load} /> : view === 'vouchers' ? <VoucherView/> : view === 'calendar' ? <CalendarView tasks={tasks} onOpenTask={openTask} /> : <>
+    {selectedTask ? <TaskDetailView task={selectedTask} onBack={() => setSelectedId(null)} onEdit={edit} onStatusChange={updateTaskStatus} onRefresh={load} /> : view === 'ticket-reports' ? <TicketReportsView/> : view === 'vouchers' ? <VoucherView/> : view === 'calendar' ? <CalendarView tasks={tasks} onOpenTask={openTask} /> : <>
     <div className="sysmon-workspace"><TaskToolbar view={view} count={filtered.length} people={people} search={search} setSearch={setSearch} type={type} setType={setType} priority={priority} setPriority={setPriority} person={person} setPerson={setPerson} status={status} setStatus={setStatus} onCreate={() => edit()} onRefresh={load} loading={loading} unavailable={!!error} />
     {error ? <div className="sysmon-empty" role="alert"><AlertCircle size={28} /><h2 className="sysmon-empty-title">Database connection needed</h2><p>{error}</p><button className="sysmon-button" onClick={load}>Try again</button></div> : loading ? <div className="sysmon-empty" role="status">Loading task register…</div> : <section id="sysmon-view-panel" aria-label={`${view} tasks`} tabIndex={0} className="sysmon-view-panel">
       {view === 'overview' && <OverviewView tasks={filtered} people={people} onEdit={openTask} onSelectStatus={s => { setStatus(s); setView('list'); }} />}

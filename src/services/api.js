@@ -1,3 +1,5 @@
+import { buildTicketReport } from '../../shared/ticket-report.js';
+
 let getToken = async () => null;
 let demoMode = false;
 export const isMonitoringDemo = () => demoMode;
@@ -23,6 +25,26 @@ async function request(path, options = {}) {
   return data;
 }
 export const getTasks = () => request('/tasks');
+export const getTicketReports = () => request('/ticket-reports');
+export const getTicketReport = async id => withReportTicketLinks(await request(`/ticket-reports/${encodeURIComponent(id)}`));
+export const saveTicketReport = body => request('/ticket-reports',{method:'POST',body:JSON.stringify(body)});
+export const getReportTeamsStatus = id => request(`/ticket-reports/${encodeURIComponent(id)}/teams`);
+export const prepareReportTeams = (id,destinationId) => request(`/ticket-reports/${encodeURIComponent(id)}/teams/preview`,{method:'POST',body:JSON.stringify({destinationId})});
+export const sendReportTeams = (id,body) => request(`/ticket-reports/${encodeURIComponent(id)}/teams/send`,{method:'POST',body:JSON.stringify(body)});
+// Confirmed Help Desk destination supplied by the user. Keep URL paths in this seam.
+export const getReportTicketLinkTemplate = () => 'https://www.mcssi.ph:3001/#/tickets/{ticket}';
+export function getReportTicketUrl(reference,template=getReportTicketLinkTemplate()) {
+  if(!template.trim())return '';
+  if(!template.includes('{ticket}'))throw new Error('The Help Desk link template must include {ticket}.');
+  const url=new URL(template.replaceAll('{ticket}',encodeURIComponent(reference)));
+  if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw new Error('Use an HTTP or HTTPS Help Desk link without credentials.');
+  return url.href;
+}
+// Add newly configured links to old report presentation/copy without rewriting saved snapshots.
+export function withReportTicketLinks(report) {
+  if(!report.tickets.some(ticket=>!ticket.url))return report;
+  return {...report,...buildTicketReport({...report,tickets:report.tickets.map(ticket=>({...ticket,url:ticket.url||getReportTicketUrl(ticket.ticketId)}))})};
+}
 export const getPeople = () => request('/people');
 export const getDeployments = () => request('/deployments');
 export const getBugOccurrences = () => request('/bug-occurrences');

@@ -9,8 +9,9 @@
   "scripts": {
     "dev": "node server/dev-server.js",
     "build": "vite build",
-    "test": "node --test server/db/pool.test.js server/demo/router.test.js server/demo/vouchers.test.js server/demo/bug-occurrences.test.js src/services/bug-trends.test.js src/services/voucher-import.test.js src/services/overview-report.test.js src/services/deployment-report.test.js shared/task-number.test.js",
-    "demo": "node server/dev-server.js --demo"
+    "test": "node --test server/db/pool.test.js server/demo/router.test.js server/demo/vouchers.test.js server/demo/bug-occurrences.test.js src/services/bug-trends.test.js src/services/voucher-import.test.js src/services/overview-report.test.js src/services/deployment-report.test.js shared/task-number.test.js shared/ticket-report.test.js src/services/ticket-import.test.js server/demo/ticket-reports.test.js server/ticket-reports-sql.test.js server/teams/teams.test.js",
+    "demo": "node server/dev-server.js --demo",
+    "teams:test": "pwsh -NoProfile -File scripts/start-teams-test.ps1"
   },
   "dependencies": {
     "express": "^5.1.0",
@@ -18,7 +19,8 @@
     "mssql": "^12.0.0",
     "pdfjs-dist": "5.6.205",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "vite": "^6.1.0"
