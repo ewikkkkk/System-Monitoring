@@ -34,6 +34,8 @@ if (demo) {
 app.use('/api/system-monitoring', (req, res, next) => {
   const userId = demo ? 'demo-local-user' : process.env.DEV_USER_ID;
   if (userId) req.user = { userId };
+  // Throwaway demo host only; METS Hub supplies its authenticated admin capability.
+  req.monitoringPermissions={canManageDeploymentDates:demo};
   next();
 }, router);
 const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });

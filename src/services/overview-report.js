@@ -11,8 +11,8 @@ export function buildOverviewReport(tasks, people, now = new Date()) {
   const recently = value => value && new Date(value) >= weekStart && new Date(value) <= now;
   const active = tasks.filter(t => !isComplete(t));
   const completed = tasks.filter(isComplete);
-  const overdue = t => !isComplete(t) && dateOnly(t.dueDate) && dateOnly(t.dueDate) < today;
-  const dueSoon = t => !isComplete(t) && dateOnly(t.dueDate) >= today && dateOnly(t.dueDate) <= lastDay;
+  const overdue = t => !isComplete(t) && dateOnly(t.targetDeploymentDate) && dateOnly(t.targetDeploymentDate) < today;
+  const upcomingDeployments = t => !isComplete(t) && dateOnly(t.targetDeploymentDate) >= today && dateOnly(t.targetDeploymentDate) <= lastDay;
   const summarize = set => ({ total: set.length, active: set.filter(t => !isComplete(t)).length,
     completed: set.filter(isComplete).length, overdue: set.filter(overdue).length,
     testing: set.filter(t => isTestingStatus(t.status)).length, hours: sumHours(set.filter(t => !isComplete(t))),
@@ -39,12 +39,12 @@ export function buildOverviewReport(tasks, people, now = new Date()) {
     }),
     attention: active.map(task => ({ task, reasons: [
       overdue(task) && 'Overdue', ['Urgent','High'].includes(task.priority) && `${task.priority} priority`,
-      !task.developerId && 'No developer', !task.testerId && 'No tester', !task.dueDate && 'No due date',
+      !task.developerId && 'No developer', !task.testerId && 'No tester', !task.targetDeploymentDate && 'No target deployment date',
       task.estimateHours == null && 'No estimate'
     ].filter(Boolean) })).filter(item => item.reasons.length).sort((a,b) => Number(overdue(b.task)) - Number(overdue(a.task)) || b.reasons.length - a.reasons.length),
-    overdue: active.filter(overdue), dueSoon: active.filter(dueSoon),
+    overdue: active.filter(overdue), upcomingDeployments: active.filter(upcomingDeployments),
     missingDeveloper: active.filter(t => !t.developerId).length, missingTester: active.filter(t => !t.testerId).length,
-    missingDueDate: active.filter(t => !t.dueDate).length, missingEstimate: active.filter(t => t.estimateHours == null).length,
+    missingTargetDate: active.filter(t => !t.targetDeploymentDate).length, missingEstimate: active.filter(t => t.estimateHours == null).length,
     createdThisWeek: tasks.filter(t => recently(t.createdAt)).length,
     completedThisWeek: completed.filter(t => recently(t.completedAt)).length,
     averageCompletionDays: durations.length ? durations.reduce((sum, days) => sum + days, 0) / durations.length : null,

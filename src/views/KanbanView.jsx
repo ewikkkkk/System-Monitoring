@@ -11,7 +11,7 @@ function Card({entry,onOpen}){
   {task.remarks&&<span className="sysmon-stage-remarks" title={task.remarks}><MessageSquare size={12}/><span>{task.remarks}</span></span>}
   <span className="sysmon-age-card-meta"><Users size={12}/>{task.developerName||task.developerId||'No developer'} · {task.testerName||task.testerId||'No tester'}</span>
   <span className={`sysmon-priority sysmon-priority-${task.priority?.toLowerCase()}`}>{task.priority}</span>
-  {task.reference&&<span className="sysmon-age-card-meta"><Ticket size={12}/>{task.reference}</span>}{task.dueDate&&<span className="sysmon-age-card-meta"><CalendarDays size={12}/>Due {formatDate(task.dueDate)}</span>}
+  {task.reference&&<span className="sysmon-age-card-meta"><Ticket size={12}/>{task.reference}</span>}{task.targetDeploymentDate&&<span className="sysmon-age-card-meta"><CalendarDays size={12}/>Target {formatDate(task.targetDeploymentDate)}</span>}
  </button>;
 }
 function Column({column,entries,onOpen}){

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { AlertCircle, List, Columns3, ChartGantt, CalendarDays } from 'lucide-react';
-import { getTasks, getMyTasks, getPeople, saveTask, getTaskHistory, isMonitoringDemo, getHelpDeskTicketPreview } from './services/api.js';
+import { getTasks, getMyTasks, getMonitoringPermissions, getPeople, saveTask, getTaskHistory, isMonitoringDemo, getHelpDeskTicketPreview } from './services/api.js';
 import './system-monitoring.css';
 import OverviewView from './views/OverviewView.jsx';
 import ListView from './views/ListView.jsx';
@@ -23,7 +23,7 @@ export default function SystemMonitoringPage(props) {
 }
 
 function MonitoringWorkspace({ darkMode = false, onToggleDarkMode, onToggleSidebar }) {
-  const [myTasks,setMyTasks]=useState([]);
+  const [myTasks,setMyTasks]=useState([]),[canManageDeploymentDates,setCanManageDeploymentDates]=useState(false);
   const [tasks, setTasks] = useState([]), [people, setPeople] = useState([]), [loading, setLoading] = useState(true), [error, setError] = useState('');
   const [search, setSearch] = useState(''), [type, setType] = useState(''), [person, setPerson] = useState(''), [status, setStatus] = useState('');
   const [editor, setEditor] = useState(null), [history, setHistory] = useState([]), [saving, setSaving] = useState(false), [editorError, setEditorError] = useState('');
@@ -44,7 +44,7 @@ function MonitoringWorkspace({ darkMode = false, onToggleDarkMode, onToggleSideb
 
   async function load() {
     setLoading(true); setError('');
-    try { const [t, p, mine] = await Promise.all([getTasks(), getPeople(),getMyTasks()]); setTasks(t); setPeople(p);setMyTasks(mine); }
+    try { const [t, p, mine, permissions] = await Promise.all([getTasks(), getPeople(),getMyTasks(),getMonitoringPermissions()]); setTasks(t); setPeople(p);setMyTasks(mine);setCanManageDeploymentDates(permissions.canManageDeploymentDates===true); }
     catch (e) { setError(e.message); } finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
@@ -53,10 +53,15 @@ function MonitoringWorkspace({ darkMode = false, onToggleDarkMode, onToggleSideb
     if (editor?.id) getTaskHistory(editor.id).then(h => { if (active) setHistory(h); }).catch(e => { if (active) setEditorError(e.message); });
     return () => { active = false; };
   }, [editor?.id]);
-  function edit(task = blank) { setKanbanId(null);setEditorError(''); setEditor({ ...task, initialCommentRequestId:crypto.randomUUID(), remarks:task.remarks||'', moduleName:task.moduleName || '', relatedTicketsText: (task.relatedTickets || []).join('\n'), dueDate: task.dueDate?.slice(0, 10) || '', targetDeploymentDate:task.targetDeploymentDate?.slice(0,10)||'', developerId: task.developerId || '', testerId: task.testerId || '', estimateHours: task.estimateHours ?? '' }); }
+  function edit(task = blank) { setKanbanId(null);setEditorError(''); setEditor({ ...task, initialCommentRequestId:crypto.randomUUID(), remarks:task.remarks||'', moduleName:task.moduleName || '', relatedTicketsText: (task.relatedTickets || []).join('\n'), targetDeploymentDate:task.targetDeploymentDate?.slice(0,10)||'', developerId: task.developerId || '', testerId: task.testerId || '', estimateHours: task.estimateHours ?? '' }); }
+  function taskWriteBody(body,previous){
+    const {dueDate,targetDeploymentDate,...rest}=body;
+    const target=targetDeploymentDate||'',old=previous?.targetDeploymentDate?.slice(0,10)||'';
+    return {...rest,...(canManageDeploymentDates&&target!==old?{targetDeploymentDate:target}:{})};
+  }
   async function submit(e) {
     e.preventDefault(); setSaving(true); setEditorError('');
-    try { const saved = await saveTask(editor.id, { ...editor, notes:editor.id?editor.notes:'',newComment:!editor.id&&editor.notes.trim()?{requestId:editor.initialCommentRequestId,text:editor.notes}:undefined, relatedTickets: parseRelatedTickets(editor.relatedTicketsText), estimateHours: editor.estimateHours === '' ? null : Number(editor.estimateHours) }); setEditor(null); setKanbanId(saved.id); await load(); }
+    try { const saved = await saveTask(editor.id, taskWriteBody({ ...editor, notes:editor.id?editor.notes:'',newComment:!editor.id&&editor.notes.trim()?{requestId:editor.initialCommentRequestId,text:editor.notes}:undefined, relatedTickets: parseRelatedTickets(editor.relatedTicketsText), estimateHours: editor.estimateHours === '' ? null : Number(editor.estimateHours) },tasks.find(task=>task.id===editor.id))); setEditor(null); setKanbanId(saved.id); await load(); }
     catch (e) { setEditorError(e.message); } finally { setSaving(false); }
   }
   const unfinishedTasks = tasks.filter(task => !isComplete(task));
@@ -77,7 +82,7 @@ function MonitoringWorkspace({ darkMode = false, onToggleDarkMode, onToggleSideb
     <div className="sysmon-footer">{error ? 'Waiting for SQL Server' : loading ? 'Connecting…' : `${filtered.length} of ${viewTasks.length} ${view === 'list' && !status && !planningActive ? 'unfinished tasks' : 'tasks'}`}<span>{kanbanActive ? 'Workflow board · Cards are grouped by stage' : planningActive ? 'Target dates are planned · Actual production events are in Calendar' : view === 'list' ? 'Unfinished by default · Select PROD LIVE (HYPERCARE) or COMPLETE to review completed work' : 'Select a task to view details · Filters apply to all views'}</span></div></div>
     </>}
     </div>
-    {editor && <TaskModal editor={editor} setEditor={setEditor} history={history} saving={saving} editorError={editorError} submit={submit} people={people} onClose={() => setEditor(null)} />}
-    {kanbanTask&&!editor&&<TaskDetailsModal key={kanbanTask.id} task={kanbanTask} people={people} onClose={()=>setKanbanId(null)} onSave={async(id,body)=>{await saveTask(id,body);const [fresh,mine]=await Promise.all([getTasks(),getMyTasks()]);setTasks(fresh);setMyTasks(mine);return fresh.find(task=>task.id===id);}} onRefresh={load}/>}
+    {editor && <TaskModal canManageDeploymentDates={canManageDeploymentDates} editor={editor} setEditor={setEditor} history={history} saving={saving} editorError={editorError} submit={submit} people={people} onClose={() => setEditor(null)} />}
+    {kanbanTask&&!editor&&<TaskDetailsModal canManageDeploymentDates={canManageDeploymentDates} key={kanbanTask.id} task={kanbanTask} people={people} onClose={()=>setKanbanId(null)} onSave={async(id,body)=>{await saveTask(id,taskWriteBody(body,tasks.find(task=>task.id===id)));const [fresh,mine]=await Promise.all([getTasks(),getMyTasks()]);setTasks(fresh);setMyTasks(mine);return fresh.find(task=>task.id===id);}} onRefresh={load}/>}
   </main>;
 }

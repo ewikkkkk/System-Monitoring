@@ -8,10 +8,10 @@ import {getTaskComments} from '../services/api.js';
 import {formatDate,taskReference,statuses} from '../task-utils.js';
 import {taskSystems} from '../../shared/task-fields.js';
 import {parseRelatedTickets} from '../../shared/related-tickets.js';
-const editable = task=>({...task,remarks:task.remarks||'',targetDeploymentDate:task.targetDeploymentDate?.slice(0,10)||'',dueDate:task.dueDate?.slice(0,10)||'',developerId:task.developerId||'',testerId:task.testerId||'',estimateHours:task.estimateHours??'',relatedTicketsText:(task.relatedTickets||[]).join('\n')});
+const editable = task=>({...task,remarks:task.remarks||'',targetDeploymentDate:task.targetDeploymentDate?.slice(0,10)||'',developerId:task.developerId||'',testerId:task.testerId||'',estimateHours:task.estimateHours??'',relatedTicketsText:(task.relatedTickets||[]).join('\n')});
 const stamp=value=>new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'}).format(new Date(value));
 function Property({icon:Icon,label,children}){return <div className="sysmon-detail-property"><dt className="sysmon-detail-label"><Icon size={16}/>{label}</dt><dd className="sysmon-detail-value">{children}</dd></div>;}
-export default function TaskDetailView({task,people,onSave,onRefresh,onBusyChange,onDirtyChange}){
+export default function TaskDetailView({task,people,onSave,onRefresh,onBusyChange,onDirtyChange,canManageDeploymentDates=false}){
  const [draft,setDraft]=useState(()=>editable(task)),[comments,setComments]=useState([]),[commentEdits,setCommentEdits]=useState({}),[newText,setNewText]=useState(''),[requestId,setRequestId]=useState(()=>crypto.randomUUID());
  const [saving,setSaving]=useState(false),[feedback,setFeedback]=useState(''),[error,setError]=useState(''),[commentError,setCommentError]=useState(''),[commentsLoading,setCommentsLoading]=useState(true),[historyOpen,setHistoryOpen]=useState(false);
  const [conversationOpen,setConversationOpen]=useState(true);
@@ -21,7 +21,7 @@ export default function TaskDetailView({task,people,onSave,onRefresh,onBusyChang
  async function loadComments(){setCommentsLoading(true);setCommentError('');try{const rows=await getTaskComments(task.id);if(mounted.current)setComments(rows);}catch(error){if(mounted.current)setCommentError(error.message);}finally{if(mounted.current)setCommentsLoading(false);}}
  useEffect(()=>{loadComments();},[task.id]);
  const set=(key,value)=>{setDraft(current=>({...current,[key]:value}));setFeedback('');};
- const changedKeys=['title','targetDeploymentDate','remarks','type','status','priority','system','moduleName','reference','description','developerId','testerId','dueDate','estimateHours','relatedTicketsText'];
+ const changedKeys=['title','targetDeploymentDate','remarks','type','status','priority','system','moduleName','reference','description','developerId','testerId','estimateHours','relatedTicketsText'];
  const dirty=changedKeys.some(key=>String(draft[key]??'')!==String(editable(task)[key]??''))||Object.keys(commentEdits).length>0||newText.length>0;
  useEffect(()=>{onDirtyChange?.(dirty);},[dirty,onDirtyChange]);
  const select=(key,label,options)=><select aria-label={label} className="sysmon-input sysmon-detail-select" value={draft[key]} disabled={saving} onChange={event=>set(key,event.target.value)}>{options.map(([value,text])=><option key={value} value={value}>{text}</option>)}</select>;
@@ -44,8 +44,7 @@ export default function TaskDetailView({task,people,onSave,onRefresh,onBusyChang
   <dl className="sysmon-detail-properties">
    <Property icon={CircleDot} label="Status">{select('status','Task status',statuses.map(value=>[value,value]))}</Property>
    <Property icon={Users} label="Developer">{select('developerId','Developer',[['','Unassigned'],...people.filter(person=>['developer','both'].includes(person.assignmentRole)||person.userId===draft.developerId).map(person=>[person.userId,person.displayName])])}</Property>
-   <Property icon={CalendarDays} label="Due date">{inline('dueDate','Due date',{type:'date'})}</Property>
-   <Property icon={CalendarDays} label="Target deployment">{inline('targetDeploymentDate','Target deployment date',{type:'date'})}</Property>
+   <Property icon={CalendarDays} label="Target deployment">{canManageDeploymentDates?<>{inline('targetDeploymentDate','Target deployment date',{type:'date'})}<span className="sysmon-muted">Admin controlled</span></>:<span>{formatDate(task.targetDeploymentDate)} <span className="sysmon-muted">(Set by admin)</span></span>}</Property>
    <Property icon={Flag} label="Priority">{select('priority','Priority',['Low','Normal','High','Urgent'].map(value=>[value,value]))}</Property>
    <Property icon={FileText} label="Task type">{select('type','Task type',['Bug','Enhancement'].map(value=>[value,value]))}</Property>
    <Property icon={Layers} label="System">{select('system','System',[...new Set([...taskSystems,task.system])].filter(Boolean).map(value=>[value,value]))}</Property>

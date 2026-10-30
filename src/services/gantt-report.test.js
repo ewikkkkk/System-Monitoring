@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildGanttReport,dayIndex,timelinePosition,groupDeploymentTasks,isDeploymentScheduled} from './gantt-report.js';
+import {buildGanttReport,dayIndex,timelinePosition,groupDeploymentTasks,isDeploymentScheduled,deploymentGroupPosition,deploymentTaskAppearance,deploymentGroupAppearance} from './gantt-report.js';
 import {validTargetDeploymentDate} from '../../shared/task-fields.js';
 const now=new Date(2026,9,30,12),at=(day,hour=9)=>new Date(2026,9,day,hour).toISOString();
 test('deployment planning excludes unscheduled and development tasks and groups eligible task IDs by target date',()=>{
@@ -27,4 +27,31 @@ test('chart completion filters separate live/complete from ongoing without inclu
  tasks.push({id:5,status:'COMPLETE'});
  const ids=completion=>buildGanttReport(tasks,[],{now,completion}).flatMap(group=>group.rows.map(row=>row.task.id));
  assert.deepEqual(ids('all'),[1,2,3]);assert.deepEqual(ids('ongoing'),[1]);assert.deepEqual(ids('complete'),[2,3]);
+});
+
+test('group lines stop at the target day center and retain accurate alignment when zoomed or clipped',()=>{
+ const group={key:'2026-11-05',rows:[{start:'2026-10-25',issue:''},{start:'2026-10-20',issue:''},{start:'2026-10-01',issue:'Target precedes development start'}]},start=dayIndex('2026-10-23');
+ for(const days of [14,28,56]){
+  const position=deploymentGroupPosition(group,start,days);
+  assert.equal(position.left,0);assert.equal(position.width,13.5/days*100);assert.equal(position.target,13.5/days*100);assert.equal(position.outside,'');
+ }
+ const visibleStart=deploymentGroupPosition({...group,rows:[{start:'2026-10-25',issue:''}]},start,28);
+ assert.equal(visibleStart.left,2/28*100);assert.equal(visibleStart.width,11.5/28*100);
+ const before=deploymentGroupPosition(group,dayIndex('2026-11-06'),14);assert.equal(before.width,0);assert.equal(before.target,null);assert.match(before.outside,/before/);
+ const after=deploymentGroupPosition(group,dayIndex('2026-10-01'),14);assert.equal(after.width,0);assert.equal(after.target,null);assert.match(after.outside,/after/);
+ const clipped=deploymentGroupPosition({...group,rows:[{start:'2026-10-01',issue:''}]},dayIndex('2026-10-01'),14);assert.equal(clipped.width,100);assert.equal(clipped.target,null);
+ const missing=deploymentGroupPosition({...group,rows:[{start:'',issue:'Ongoing dev start not recorded'}]},start,28);assert.equal(missing.width,0);assert.equal(missing.target,13.5/28*100);
+});
+
+test('missed deployment is red only after the target day while unfinished; task status drives other colors',()=>{
+ const task={status:'FOR DEPLOYMENT (PL)',targetDeploymentDate:'2026-10-29'},today='2026-10-30';
+ assert.equal(deploymentTaskAppearance(task,today).key,'missed');
+ assert.equal(deploymentTaskAppearance({...task,targetDeploymentDate:today},today).key,'deployment');
+ assert.equal(deploymentTaskAppearance({...task,targetDeploymentDate:'2026-10-31'},today).key,'deployment');
+ for(const status of ['PROD LIVE (HYPERCARE)','COMPLETE','Closed','Prod live'])assert.equal(deploymentTaskAppearance({...task,status},today).key,'live');
+ for(const [status,key] of [['FOR TESTING (DL)','testing'],['FOR MONITORING','monitoring'],['ONGOING DEV','development']])assert.equal(deploymentTaskAppearance({...task,status,targetDeploymentDate:'2026-11-05'},today).key,key);
+ assert.equal(deploymentTaskAppearance({...task,targetDeploymentDate:null},today).missed,false);
+ const rows=[{task:{...task,status:'COMPLETE'}},{task:{...task,status:'FOR TESTING (DL)',targetDeploymentDate:'2026-11-05'}},{task}];
+ const mixed=deploymentGroupAppearance({rows},today);assert.equal(mixed.key,'missed');assert.equal(mixed.missedCount,1);assert.match(mixed.description,/COMPLETE: 1/);
+ assert.equal(deploymentGroupAppearance({rows:rows.slice(0,2)},today).key,'testing');
 });

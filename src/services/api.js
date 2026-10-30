@@ -26,6 +26,7 @@ async function request(path, options = {}) {
 }
 export const getTasks = () => request('/tasks');
 export const getMyTasks = () => request('/my-tasks');
+export const getMonitoringPermissions = () => request('/permissions');
 export const getTicketReports = () => request('/ticket-reports');
 export const getTicketReport = async id => withReportTicketLinks(await request(`/ticket-reports/${encodeURIComponent(id)}`));
 export const saveTicketReport = body => request('/ticket-reports',{method:'POST',body:JSON.stringify(body)});

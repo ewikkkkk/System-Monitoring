@@ -1,5 +1,6 @@
 // Throwaway local demo adapter; the METS Hub integration uses server/index.js.
 import { Router, json } from 'express';
+import {monitoringPermissions,deploymentDateWriteError} from '../deployment-permissions.js';
 import { validCommentChanges } from '../../shared/task-comments.js';
 import { validDeployment } from '../deployment-validation.js';
 import { formatTaskNumber } from '../../shared/task-number.js';
@@ -16,6 +17,7 @@ import { normalizeTaskStatus, validTaskStatus, isCompletedStatus } from '../../s
 const completed = isCompletedStatus;
 export function createDemoMonitoringRouter(store) {
   const r = Router();
+  r.get('/permissions',(req,res)=>res.json(monitoringPermissions(req)));
   r.use('/ticket-reports',json({limit:'3mb'}));
   r.use(json({ limit: '100kb' }));
   r.use((req, res, next) => { res.set('X-System-Monitoring-Mode', 'demo'); next(); });
@@ -232,6 +234,8 @@ export function createDemoMonitoringRouter(store) {
   });
   async function save(req, res) {
     if (!req.user?.userId) return res.status(401).json({ error: 'Host user context is required' });
+    const datePermissionError=deploymentDateWriteError(req);
+    if(datePermissionError)return res.status(403).json({error:datePermissionError});
     const id = req.params.id ? Number(req.params.id) : null;
     const b = req.body || {};
     if(!validCommentChanges(b))return res.status(400).json({error:'Comments must contain 1–4000 characters; refresh before retrying invalid comment edits.'});
@@ -262,7 +266,7 @@ export function createDemoMonitoringRouter(store) {
       const task = {
         id: taskId, ...Object.fromEntries(Object.keys(strings).map(k => [k, b[k]])), title: b.title.trim(),
         type: b.type, status: normalizeTaskStatus(b.status), priority: b.priority, developerId: b.developerId || null, testerId: b.testerId || null,
-        dueDate: b.dueDate || null, estimateHours: b.estimateHours ?? null, targetDeploymentDate:b.targetDeploymentDate===undefined?(old?.targetDeploymentDate||null):b.targetDeploymentDate||null, remarks:b.remarks===undefined?(old?.remarks||''):b.remarks.trim(), moduleName:b.moduleName===undefined?(old?.moduleName||''):b.moduleName.trim(), relatedTickets:b.relatedTickets===undefined?(old?.relatedTickets||[]):[...new Set(b.relatedTickets.map(reference=>reference.trim()))],
+        dueDate:b.dueDate===undefined?(old?.dueDate||null):b.dueDate||null, estimateHours: b.estimateHours ?? null, targetDeploymentDate:b.targetDeploymentDate===undefined?(old?.targetDeploymentDate||null):b.targetDeploymentDate||null, remarks:b.remarks===undefined?(old?.remarks||''):b.remarks.trim(), moduleName:b.moduleName===undefined?(old?.moduleName||''):b.moduleName.trim(), relatedTickets:b.relatedTickets===undefined?(old?.relatedTickets||[]):[...new Set(b.relatedTickets.map(reference=>reference.trim()))],
         createdBy: old?.createdBy || String(req.user.userId), updatedBy: String(req.user.userId),
         createdAt: old?.createdAt || now, updatedAt: now, completedAt: completed(b.status) ? old?.completedAt || now : null
       };

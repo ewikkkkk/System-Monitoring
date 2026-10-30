@@ -1,4 +1,5 @@
 import { Router, json } from 'express';
+import {monitoringPermissions,deploymentDateWriteError} from './deployment-permissions.js';
 import { validCommentChanges } from '../shared/task-comments.js';
 import { query, sql, withPool } from './db/pool.js';
 import { validDeployment } from './deployment-validation.js';
@@ -18,6 +19,8 @@ export function createSystemMonitoringRouter(getPool) {
   r.use((req, res, next) => withPool(getPool, next));
   r.use('/ticket-reports', json({ limit: '3mb' }));
   r.use(json({ limit: '100kb' }));
+  // Host authenticates viewers and grants this trusted capability only to scheduling admins.
+  r.get('/permissions',(req,res)=>res.json(monitoringPermissions(req)));
   // Host: Teams status/preview and send require authorized Help Desk reporters/team leads.
   // The host supplies app.locals.systemMonitoringTeams and the delegated token getter; no module-owned login.
   r.get('/ticket-reports/:id/teams',async(req,res)=>{
@@ -294,6 +297,8 @@ export function createSystemMonitoringRouter(getPool) {
     if(!validCommentChanges(b))return res.status(400).json({error:'Comments must contain 1–4000 characters; refresh before retrying invalid comment edits.'});
     if (!req.user?.userId) return res.status(401).json({ error: 'Host user context is required' });
     const id = req.params.id ? Number(req.params.id) : null;
+    const datePermissionError=deploymentDateWriteError(req);
+    if(datePermissionError)return res.status(403).json({error:datePermissionError});
     const validId = v => v == null || (typeof v === 'string' && v.length > 0 && v.length <= 128);
     if ((id !== null && (!Number.isSafeInteger(id) || id < 1)) || typeof b.title !== 'string' || !b.title.trim() || b.title.length > 240 ||
       !['Bug', 'Enhancement'].includes(b.type) || !validTaskStatus(b.status) || !priorities.includes(b.priority) ||
@@ -312,7 +317,7 @@ export function createSystemMonitoringRouter(getPool) {
       priority: { type: sql.NVarChar(10), value: b.priority }, description: { type: sql.NVarChar(8000), value: b.description },
       notes: { type: sql.NVarChar(8000), value: b.notes }, system: { type: sql.NVarChar(100), value: b.system },
       reference: { type: sql.NVarChar(80), value: b.reference }, developerId: { type: sql.NVarChar(128), value: b.developerId || null },
-      testerId: { type: sql.NVarChar(128), value: b.testerId || null }, dueDate: { type: sql.Date, value: b.dueDate || null },
+      testerId: { type: sql.NVarChar(128), value: b.testerId || null }, dueDate: { type: sql.Date, value: b.dueDate || null },dueDateProvided:{type:sql.Bit,value:b.dueDate!==undefined},
       estimateHours: { type: sql.Decimal(7, 2), value: b.estimateHours ?? null }, actor: { type: sql.NVarChar(128), value: String(req.user.userId) },
       relatedTickets:{type:sql.NVarChar(sql.MAX),value:b.relatedTickets === undefined ? null : JSON.stringify([...new Set(b.relatedTickets.map(reference=>reference.trim()))])},
       targetDeploymentDate:{type:sql.Date,value:b.targetDeploymentDate||null},targetDateProvided:{type:sql.Bit,value:b.targetDeploymentDate!==undefined},
@@ -331,7 +336,7 @@ export function createSystemMonitoringRouter(getPool) {
         SET @id = SCOPE_IDENTITY();
       END ELSE BEGIN
         UPDATE monitoring.Tasks SET title=@title,type=@type,status=@status,workflowStatus=@workflowStatus,priority=@priority,description=@description,notes=@notes,system=@system,
-        reference=@reference,developerId=@developerId,testerId=@testerId,dueDate=@dueDate,estimateHours=@estimateHours,
+        reference=@reference,developerId=@developerId,testerId=@testerId,dueDate=CASE WHEN @dueDateProvided=1 THEN @dueDate ELSE dueDate END,estimateHours=@estimateHours,
         targetDeploymentDate=CASE WHEN @targetDateProvided=1 THEN @targetDeploymentDate ELSE targetDeploymentDate END,remarks=COALESCE(@remarks,remarks),moduleName=COALESCE(@moduleName,moduleName),relatedTickets=COALESCE(@relatedTickets,relatedTickets),updatedBy=@actor,updatedAt=SYSUTCDATETIME(),completedAt=CASE WHEN @status IN ('Prod live','Closed') THEN COALESCE(completedAt,SYSUTCDATETIME()) ELSE NULL END WHERE id=@id;
         IF @@ROWCOUNT = 0 THROW 50001, 'Task not found', 1;
       END;

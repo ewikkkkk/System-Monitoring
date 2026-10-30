@@ -37,11 +37,16 @@ test('SQL workflow routes bind precise and compatibility statuses; read old rows
 
 test('SQL task save binds conversation text and host author inside the task transaction',async t=>{
  const calls=[],pool={request:()=>{const params={};return{input(name,type,value){params[name]=value;return this;},async query(text){calls.push({text,params});return{recordset:[{id:1}]};}};}};
- const app=express();app.use((req,res,next)=>{req.user={userId:'host-author'};next();});app.use(createSystemMonitoringRouter(()=>pool));
+ let scheduleAdmin=false;
+ const app=express();app.use((req,res,next)=>{req.user={userId:'host-author'};req.monitoringPermissions={canManageDeploymentDates:scheduleAdmin};next();});app.use(createSystemMonitoringRouter(()=>pool));
  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
  const text="x'; DROP TABLE monitoring.TaskComments;--",body={title:'Inline edit',targetDeploymentDate:'2026-11-05',remarks:"Good for test '; --",type:'Bug',status:'OPEN',priority:'Normal',system:'WMS',moduleName:'Picking',reference:'METS-1',description:'Details',notes:'Legacy notes',newComment:{requestId:randomUUID(),text,actorId:'forged'},commentEdits:[{id:2,text:'Own comment correction'}]};
+ const denied=await fetch(`http://127.0.0.1:${server.address().port}/tasks/1?isAdmin=true`,{method:'PUT',headers:{'Content-Type':'application/json','X-Admin':'true'},body:JSON.stringify({...body,isAdmin:true,monitoringPermissions:{canManageDeploymentDates:true}})});
+ assert.equal(denied.status,403);assert.equal(calls.length,0);
+ assert.equal((await(await fetch(`http://127.0.0.1:${server.address().port}/permissions`)).json()).canManageDeploymentDates,false);
+ scheduleAdmin=true;
  const response=await fetch(`http://127.0.0.1:${server.address().port}/tasks/1`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
- assert.equal(response.status,200);const call=calls.at(-1);assert.equal(call.params.actor,'host-author');assert.equal(call.params.commentText,text);assert.equal(call.params.remarks,body.remarks);assert.equal(call.params.targetDeploymentDate,'2026-11-05');assert.equal(call.params.targetDateProvided,true);assert.ok(!call.text.includes(body.remarks));assert.equal(call.params.commentRequest,body.newComment.requestId);assert.ok(!call.text.includes(text));assert.deepEqual(JSON.parse(call.params.commentEdits),body.commentEdits);
+ assert.equal(response.status,200);const call=calls.at(-1);assert.equal(call.params.actor,'host-author');assert.equal(call.params.commentText,text);assert.equal(call.params.remarks,body.remarks);assert.equal(call.params.targetDeploymentDate,'2026-11-05');assert.equal(call.params.targetDateProvided,true);assert.equal(call.params.dueDateProvided,false);assert.match(call.text,/dueDate=CASE WHEN @dueDateProvided=1/);assert.ok(!call.text.includes(body.remarks));assert.equal(call.params.commentRequest,body.newComment.requestId);assert.ok(!call.text.includes(text));assert.deepEqual(JSON.parse(call.params.commentEdits),body.commentEdits);
  assert.ok(call.text.includes('c.actorId<>@actor'));assert.ok(call.text.indexOf('INSERT monitoring.TaskComments')<call.text.indexOf('COMMIT;'));assert.ok(call.text.includes('IF @@TRANCOUNT > 0 ROLLBACK'));
 });
 
