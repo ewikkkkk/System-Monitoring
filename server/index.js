@@ -1,16 +1,17 @@
 import { Router, json } from 'express';
+import { validCommentChanges } from '../shared/task-comments.js';
 import { query, sql, withPool } from './db/pool.js';
 import { validDeployment } from './deployment-validation.js';
 import { formatTaskNumber } from '../shared/task-number.js';
 import { validVoucher, validVoucherUsage, validVoucherImport } from './voucher-validation.js';
 import { readRelatedTickets, validRelatedTickets } from '../shared/related-tickets.js';
 import { validBugOccurrence } from './bug-validation.js';
-import { taskSystems, validTaskModule } from '../shared/task-fields.js';
+import { taskSystems, validTaskModule, validTaskRemarks, validTargetDeploymentDate } from '../shared/task-fields.js';
 import { prepareTicketReport } from './ticket-report-validation.js';
 import { sqlTeamsRepository } from './teams/repositories.js';
 import { teamsStatus, prepareTeamsReport, sendTeamsReport } from './teams/delivery.js';
 
-const statuses = ['Open', 'In progress', 'In testing', 'Ready for release', 'Prod live', 'Closed'];
+import { normalizeTaskStatus, validTaskStatus, compatibilityTaskStatus } from '../shared/task-statuses.js';
 const priorities = ['Low', 'Normal', 'High', 'Urgent'];
 export function createSystemMonitoringRouter(getPool) {
   const r = Router();
@@ -82,11 +83,31 @@ export function createSystemMonitoringRouter(getPool) {
     const result = await query('SELECT userId, displayName, assignmentRole FROM monitoring.People WHERE active = 1 ORDER BY displayName');
     res.json(result.recordset);
   });
+  // Host restricts this router to monitoring viewers; personal scope uses only host identity.
+  r.get('/my-tasks', async (req, res) => {
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    const result=await query(`SELECT t.*, d.displayName AS developerName, p.displayName AS testerName
+      FROM monitoring.Tasks t LEFT JOIN monitoring.People d ON t.developerId=d.userId
+      LEFT JOIN monitoring.People p ON t.testerId=p.userId
+      WHERE t.developerId=@actor OR t.testerId=@actor ORDER BY t.updatedAt DESC`,
+      {actor:{type:sql.NVarChar(128),value:String(req.user.userId)}});
+    res.json(result.recordset.map(task=>({...task,remarks:task.remarks||'',status:normalizeTaskStatus(task.workflowStatus||task.status),relatedTickets:readRelatedTickets(task.relatedTickets),taskNumber:formatTaskNumber(task)})));
+  });
   r.get('/tasks', async (req, res) => {
     const result = await query(`SELECT t.*, d.displayName AS developerName, p.displayName AS testerName
       FROM monitoring.Tasks t LEFT JOIN monitoring.People d ON t.developerId = d.userId
       LEFT JOIN monitoring.People p ON t.testerId = p.userId ORDER BY t.updatedAt DESC`);
-    res.json(result.recordset.map(task => ({ ...task, relatedTickets: readRelatedTickets(task.relatedTickets), taskNumber: formatTaskNumber(task) })));
+    res.json(result.recordset.map(task => ({ ...task, remarks:task.remarks||'', status:normalizeTaskStatus(task.workflowStatus||task.status), relatedTickets: readRelatedTickets(task.relatedTickets), taskNumber: formatTaskNumber(task) })));
+  });
+  // Host restricts conversation reads to monitoring viewers; task writes to developers/testers/leads.
+  r.get('/tasks/:id/comments',async(req,res)=>{
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    const id=Number(req.params.id);if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Invalid task ID'});
+    const result=await query(`IF NOT EXISTS(SELECT 1 FROM monitoring.Tasks WHERE id=@id) THROW 50001,'Task not found',1;
+      SELECT c.id,c.taskId,c.actorId,c.body AS text,c.createdAt,c.editedAt,COALESCE(p.displayName,c.actorId) AS authorName
+      FROM monitoring.TaskComments c LEFT JOIN monitoring.People p ON p.userId=c.actorId
+      WHERE c.taskId=@id ORDER BY c.createdAt,c.id`,{id:{type:sql.Int,value:id}});
+    res.json(result.recordset.map(comment=>({...comment,canEdit:comment.actorId===String(req.user.userId)})));
   });
   r.get('/tasks/:id/history', async (req, res) => {
     const id = Number(req.params.id);
@@ -97,12 +118,18 @@ export function createSystemMonitoringRouter(getPool) {
   r.put('/tasks/:id', save);
   r.post('/tasks', save);
   // Host restricts resolution history to authorized monitoring viewers at router level.
+  // Host authorizes timeline reads for monitoring viewers at router level.
+  r.get('/task-timeline',async(req,res)=>{
+    const result=await query(`SELECT taskId,MIN(changedAt) AS firstDevAt FROM monitoring.TaskHistory
+      WHERE status IN ('ONGOING DEV','In progress') GROUP BY taskId`);
+    res.json(result.recordset);
+  });
   r.get('/task-resolutions',async(req,res)=>{
     const result=await query(`WITH ordered AS (
       SELECT id,taskId,changedAt,actorId,status,LAG(status) OVER(PARTITION BY taskId ORDER BY changedAt,id) AS previousStatus
       FROM monitoring.TaskHistory)
       SELECT id,taskId,changedAt AS occurredAt,actorId,status FROM ordered
-      WHERE status IN ('Prod live','Closed') AND (previousStatus IS NULL OR previousStatus NOT IN ('Prod live','Closed'))
+      WHERE status IN ('Prod live','Closed','PROD LIVE (HYPERCARE)','COMPLETE') AND (previousStatus IS NULL OR previousStatus NOT IN ('Prod live','Closed','PROD LIVE (HYPERCARE)','COMPLETE'))
       ORDER BY changedAt DESC,id DESC`);
     res.json(result.recordset);
   });
@@ -116,7 +143,7 @@ export function createSystemMonitoringRouter(getPool) {
     if(!Number.isSafeInteger(id)||id<1||id>2147483647||!validBugOccurrence(b))return res.status(400).json({error:'Enter a valid recurrence date, ticket and notes; future reports are not allowed'});
     const result=await query(`SET XACT_ABORT ON; BEGIN TRY BEGIN TRANSACTION;
       DECLARE @type nvarchar(20),@createdAt datetime2,@status nvarchar(30);
-      SELECT @type=type,@createdAt=createdAt,@status=status FROM monitoring.Tasks WITH(UPDLOCK,HOLDLOCK) WHERE id=@id;
+      SELECT @type=type,@createdAt=createdAt,@status=COALESCE(workflowStatus,status) FROM monitoring.Tasks WITH(UPDLOCK,HOLDLOCK) WHERE id=@id;
       IF @type IS NULL THROW 50001,'Task not found',1;
       IF @type<>'Bug' OR @occurredAt<@createdAt THROW 50006,'Recurrence must be for a bug and occur on or after task creation',1;
       IF @deployment IS NOT NULL AND NOT EXISTS(SELECT 1 FROM monitoring.Deployments WHERE id=@deployment AND occurredAt<=@occurredAt)
@@ -125,9 +152,9 @@ export function createSystemMonitoringRouter(getPool) {
       INSERT monitoring.BugOccurrences(taskId,occurredAt,reference,notes,deploymentId,actorId)
         OUTPUT INSERTED.id INTO @created VALUES(@id,@occurredAt,@reference,@notes,@deployment,@actor);
       UPDATE monitoring.Tasks SET updatedAt=SYSUTCDATETIME(),updatedBy=@actor WHERE id=@id;
-      IF @reopen=1 AND @status IN ('Prod live','Closed') BEGIN
-        UPDATE monitoring.Tasks SET status='Open',completedAt=NULL,updatedAt=SYSUTCDATETIME(),updatedBy=@actor WHERE id=@id;
-        SET @status='Open';
+      IF @reopen=1 AND @status IN ('Prod live','Closed','PROD LIVE (HYPERCARE)','COMPLETE') BEGIN
+        UPDATE monitoring.Tasks SET status='Open',workflowStatus='OPEN',completedAt=NULL,updatedAt=SYSUTCDATETIME(),updatedBy=@actor WHERE id=@id;
+        SET @status='OPEN';
       END;
       INSERT monitoring.TaskHistory(taskId,actorId,status,notes) VALUES(@id,@actor,@status,CONCAT('Recurrence reported. ',@notes));
       COMMIT; SELECT id FROM @created;
@@ -223,16 +250,16 @@ export function createSystemMonitoringRouter(getPool) {
   // Host restricts status writes to developers/testers/leads at router middleware level.
   r.patch('/tasks/:id/status', async (req, res) => {
     if (!req.user?.userId) return res.status(401).json({ error: 'Host user context is required' });
-    const id = Number(req.params.id), status = req.body?.status;
-    if (!Number.isSafeInteger(id) || id < 1 || !statuses.includes(status)) return res.status(400).json({ error: 'Invalid task or status' });
+    const id = Number(req.params.id), status = normalizeTaskStatus(req.body?.status);
+    if (!Number.isSafeInteger(id) || id < 1 || !validTaskStatus(status)) return res.status(400).json({ error: 'Invalid task or status' });
     const result = await query(`SET XACT_ABORT ON; BEGIN TRY BEGIN TRANSACTION;
-      UPDATE monitoring.Tasks SET status=@status,updatedBy=@actor,updatedAt=SYSUTCDATETIME(),
+      UPDATE monitoring.Tasks SET status=@status,workflowStatus=@workflowStatus,updatedBy=@actor,updatedAt=SYSUTCDATETIME(),
       completedAt=CASE WHEN @status IN ('Prod live','Closed') THEN COALESCE(completedAt,SYSUTCDATETIME()) ELSE NULL END WHERE id=@id;
       IF @@ROWCOUNT=0 THROW 50001, 'Task not found', 1;
-      INSERT monitoring.TaskHistory(taskId,actorId,status,notes) VALUES(@id,@actor,@status,@note);
-      COMMIT; SELECT id,status,updatedAt,completedAt FROM monitoring.Tasks WHERE id=@id;
+      INSERT monitoring.TaskHistory(taskId,actorId,status,notes) VALUES(@id,@actor,@workflowStatus,@note);
+      COMMIT; SELECT id,workflowStatus AS status,updatedAt,completedAt FROM monitoring.Tasks WHERE id=@id;
       END TRY BEGIN CATCH IF @@TRANCOUNT>0 ROLLBACK; THROW; END CATCH`, {
-      id: { type: sql.Int, value: id }, status: { type: sql.NVarChar(30), value: status },
+      id: { type: sql.Int, value: id }, status: { type: sql.NVarChar(30), value: compatibilityTaskStatus(status) }, workflowStatus:{type:sql.NVarChar(30),value:status},
       actor: { type: sql.NVarChar(128), value: String(req.user.userId) }, note: { type: sql.NVarChar(8000), value: `Status changed to ${status}` }
     });
     res.json(result.recordset[0]);
@@ -264,27 +291,32 @@ export function createSystemMonitoringRouter(getPool) {
   });
   async function save(req, res) {
     const b = req.body || {};
+    if(!validCommentChanges(b))return res.status(400).json({error:'Comments must contain 1–4000 characters; refresh before retrying invalid comment edits.'});
     if (!req.user?.userId) return res.status(401).json({ error: 'Host user context is required' });
     const id = req.params.id ? Number(req.params.id) : null;
     const validId = v => v == null || (typeof v === 'string' && v.length > 0 && v.length <= 128);
     if ((id !== null && (!Number.isSafeInteger(id) || id < 1)) || typeof b.title !== 'string' || !b.title.trim() || b.title.length > 240 ||
-      !['Bug', 'Enhancement'].includes(b.type) || !statuses.includes(b.status) || !priorities.includes(b.priority) ||
+      !['Bug', 'Enhancement'].includes(b.type) || !validTaskStatus(b.status) || !priorities.includes(b.priority) ||
       !validId(b.developerId) || !validId(b.testerId) || typeof b.description !== 'string' || b.description.length > 8000 ||
-      typeof b.notes !== 'string' || b.notes.length > 8000 || typeof b.system !== 'string' || b.system.length > 100 || !validTaskModule(b.moduleName) || (id===null && !taskSystems.includes(b.system)) ||
+      typeof b.notes !== 'string' || b.notes.length > 8000 || typeof b.system !== 'string' || b.system.length > 100 || !validTaskModule(b.moduleName) || !validTaskRemarks(b.remarks) || !validTargetDeploymentDate(b.targetDeploymentDate) || (id===null && !taskSystems.includes(b.system)) ||
       typeof b.reference !== 'string' || b.reference.length > 80 || !validRelatedTickets(b.relatedTickets) ||
       (b.dueDate && (!/^\d{4}-\d{2}-\d{2}$/.test(b.dueDate) || Number.isNaN(Date.parse(b.dueDate)))) ||
       (b.estimateHours != null && (!Number.isFinite(b.estimateHours) || b.estimateHours < 0 || b.estimateHours > 9999))) {
       return res.status(400).json({ error: 'Check required fields, assignments, dates, and field lengths' });
     }
     const params = {
+      commentEdits:{type:sql.NVarChar(sql.MAX),value:JSON.stringify(b.commentEdits||[])},
+      commentText:{type:sql.NVarChar(4000),value:b.newComment?.text.trim()||null},commentRequest:{type:sql.UniqueIdentifier,value:b.newComment?.requestId||null},
       id: { type: sql.Int, value: id }, title: { type: sql.NVarChar(240), value: b.title.trim() },
-      type: { type: sql.NVarChar(20), value: b.type }, status: { type: sql.NVarChar(30), value: b.status },
+      type: { type: sql.NVarChar(20), value: b.type }, status: { type: sql.NVarChar(30), value: compatibilityTaskStatus(b.status) }, workflowStatus:{type:sql.NVarChar(30),value:normalizeTaskStatus(b.status)},
       priority: { type: sql.NVarChar(10), value: b.priority }, description: { type: sql.NVarChar(8000), value: b.description },
       notes: { type: sql.NVarChar(8000), value: b.notes }, system: { type: sql.NVarChar(100), value: b.system },
       reference: { type: sql.NVarChar(80), value: b.reference }, developerId: { type: sql.NVarChar(128), value: b.developerId || null },
       testerId: { type: sql.NVarChar(128), value: b.testerId || null }, dueDate: { type: sql.Date, value: b.dueDate || null },
       estimateHours: { type: sql.Decimal(7, 2), value: b.estimateHours ?? null }, actor: { type: sql.NVarChar(128), value: String(req.user.userId) },
       relatedTickets:{type:sql.NVarChar(sql.MAX),value:b.relatedTickets === undefined ? null : JSON.stringify([...new Set(b.relatedTickets.map(reference=>reference.trim()))])},
+      targetDeploymentDate:{type:sql.Date,value:b.targetDeploymentDate||null},targetDateProvided:{type:sql.Bit,value:b.targetDeploymentDate!==undefined},
+      remarks:{type:sql.NVarChar(1000),value:b.remarks===undefined?null:b.remarks.trim()},
       moduleName:{type:sql.NVarChar(120),value:b.moduleName===undefined?null:b.moduleName.trim()},allowedSystems:{type:sql.NVarChar(sql.MAX),value:JSON.stringify(taskSystems)}
     };
     const result = await query(`SET XACT_ABORT ON;
@@ -294,16 +326,29 @@ export function createSystemMonitoringRouter(getPool) {
         AND (@id IS NULL OR NOT EXISTS(SELECT 1 FROM monitoring.Tasks WITH(UPDLOCK,HOLDLOCK) WHERE id=@id AND system=@system))
         THROW 50007,'Choose a supported system; existing legacy values may only be preserved unchanged',1;
       IF @id IS NULL BEGIN
-        INSERT monitoring.Tasks (title,type,status,priority,description,notes,system,reference,developerId,testerId,dueDate,estimateHours,createdBy,updatedBy,completedAt,relatedTickets,moduleName)
-        VALUES (@title,@type,@status,@priority,@description,@notes,@system,@reference,@developerId,@testerId,@dueDate,@estimateHours,@actor,@actor,CASE WHEN @status IN ('Prod live','Closed') THEN SYSUTCDATETIME() ELSE NULL END,COALESCE(@relatedTickets,'[]'),COALESCE(@moduleName,''));
+        INSERT monitoring.Tasks (title,type,status,workflowStatus,priority,description,notes,system,reference,developerId,testerId,dueDate,estimateHours,createdBy,updatedBy,completedAt,relatedTickets,moduleName,remarks,targetDeploymentDate)
+        VALUES (@title,@type,@status,@workflowStatus,@priority,@description,@notes,@system,@reference,@developerId,@testerId,@dueDate,@estimateHours,@actor,@actor,CASE WHEN @status IN ('Prod live','Closed') THEN SYSUTCDATETIME() ELSE NULL END,COALESCE(@relatedTickets,'[]'),COALESCE(@moduleName,''),COALESCE(@remarks,''),@targetDeploymentDate);
         SET @id = SCOPE_IDENTITY();
       END ELSE BEGIN
-        UPDATE monitoring.Tasks SET title=@title,type=@type,status=@status,priority=@priority,description=@description,notes=@notes,system=@system,
+        UPDATE monitoring.Tasks SET title=@title,type=@type,status=@status,workflowStatus=@workflowStatus,priority=@priority,description=@description,notes=@notes,system=@system,
         reference=@reference,developerId=@developerId,testerId=@testerId,dueDate=@dueDate,estimateHours=@estimateHours,
-        moduleName=COALESCE(@moduleName,moduleName),relatedTickets=COALESCE(@relatedTickets,relatedTickets),updatedBy=@actor,updatedAt=SYSUTCDATETIME(),completedAt=CASE WHEN @status IN ('Prod live','Closed') THEN COALESCE(completedAt,SYSUTCDATETIME()) ELSE NULL END WHERE id=@id;
+        targetDeploymentDate=CASE WHEN @targetDateProvided=1 THEN @targetDeploymentDate ELSE targetDeploymentDate END,remarks=COALESCE(@remarks,remarks),moduleName=COALESCE(@moduleName,moduleName),relatedTickets=COALESCE(@relatedTickets,relatedTickets),updatedBy=@actor,updatedAt=SYSUTCDATETIME(),completedAt=CASE WHEN @status IN ('Prod live','Closed') THEN COALESCE(completedAt,SYSUTCDATETIME()) ELSE NULL END WHERE id=@id;
         IF @@ROWCOUNT = 0 THROW 50001, 'Task not found', 1;
       END;
-      INSERT monitoring.TaskHistory (taskId,actorId,status,notes) VALUES (@id,@actor,@status,@notes);
+      IF EXISTS(SELECT 1 FROM OPENJSON(@commentEdits) WITH(id int,text nvarchar(4000)) e
+        LEFT JOIN monitoring.TaskComments c WITH(UPDLOCK,HOLDLOCK) ON c.id=e.id AND c.taskId=@id
+        WHERE c.id IS NULL OR c.actorId<>@actor) THROW 50008,'Only your own comments can be edited; refresh the conversation',1;
+      UPDATE c SET body=e.text,editedAt=SYSUTCDATETIME() FROM monitoring.TaskComments c
+        INNER JOIN OPENJSON(@commentEdits) WITH(id int,text nvarchar(4000)) e ON c.id=e.id WHERE c.taskId=@id AND c.actorId=@actor;
+      IF @commentText IS NOT NULL BEGIN
+        IF EXISTS(SELECT 1 FROM monitoring.TaskComments WITH(UPDLOCK,HOLDLOCK) WHERE requestId=@commentRequest AND (taskId<>@id OR actorId<>@actor))
+          THROW 50008,'Comment request already belongs to another task or author',1;
+        IF NOT EXISTS(SELECT 1 FROM monitoring.TaskComments WITH(UPDLOCK,HOLDLOCK) WHERE requestId=@commentRequest)
+          INSERT monitoring.TaskComments(taskId,actorId,body,requestId) VALUES(@id,@actor,@commentText,@commentRequest);
+      END;
+      INSERT monitoring.TaskHistory (taskId,actorId,status,notes) VALUES (@id,@actor,@workflowStatus,
+        CASE WHEN @commentText IS NOT NULL THEN CONCAT('Comment added. ',@commentText)
+        WHEN EXISTS(SELECT 1 FROM OPENJSON(@commentEdits)) THEN 'Conversation comment edited.' ELSE @notes END);
       COMMIT;
       SELECT @id AS id;
       END TRY BEGIN CATCH
@@ -314,6 +359,7 @@ export function createSystemMonitoringRouter(getPool) {
   }
   r.use((error, req, res, next) => {
     if(error.type==='entity.too.large')return res.status(413).json({error:'Request is too large. Import fewer ticket rows.'});
+    if(error.number===50008)return res.status(403).json({error:'Only your own comments can be edited. Refresh the conversation before retrying.'});
     if(error.number===50003) return res.status(404).json({error:'Voucher not found'});
     if(error.number===50004) return res.status(409).json({error:'Voucher is no longer active. Refresh the inventory.'});
     if(error.number===50005) return res.status(409).json({error:'Only a location-mismatch voucher can be returned to active inventory'});

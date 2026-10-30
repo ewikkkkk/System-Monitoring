@@ -1,3 +1,4 @@
+import { taskStatuses, isCompletedStatus } from '../../shared/task-statuses.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
@@ -36,7 +37,7 @@ test('demo creates, updates and persists tasks/history with host identity', asyn
   const reloaded = await createDemoStore(file);
   const saved = reloaded.snapshot().tasks.find(item => item.id === id);
   assert.equal(saved.createdBy, 'test-host-user');
-  assert.equal(saved.status, 'Closed');
+  assert.equal(saved.status, 'COMPLETE');
   assert.ok(saved.completedAt);
   const history = await (await request(`/tasks/${id}/history`)).json();
   assert.equal(history.length, 2);
@@ -61,6 +62,13 @@ test('status patch preserves task fields; production events and linked reverts p
   assert.equal((await request('/tasks/1/status','PATCH',{status:'In progress'})).status,200);
   assert.equal(store.snapshot().tasks[0].completedAt,null);
   assert.equal((await request('/tasks/1/status','PATCH',{status:'unknown'})).status,400);
+  for(const status of taskStatuses){
+    const response=await request('/tasks/1/status','PATCH',{status});assert.equal(response.status,200);
+    const changed=await response.json();assert.equal(changed.status,status);assert.equal(Boolean(changed.completedAt),isCompletedStatus(status));
+    assert.equal((await(await request('/tasks')).json()).find(task=>task.id===1).status,status);
+  }
+  await request('/tasks/1/status','PATCH',{status:'ONGOING DEV'});
+
   const event={taskId:1,action:'Fix',version:'demo-v1',notes:'Production fix deployed',occurredAt:'2026-10-22T02:00:00.000Z',actorId:'forged'};
   const created=await request('/deployments','POST',event);
   assert.equal(created.status,201);const {id}=await created.json();
@@ -74,7 +82,7 @@ test('status patch preserves task fields; production events and linked reverts p
   const events=await(await request('/deployments')).json();
   assert.equal(events.length,2);assert.equal(events[0].revertsId,id);
   assert.ok(events.every(row=>row.actorId==='host-release-manager'));
-  assert.equal(store.snapshot().tasks[0].status,'In progress');
+  assert.equal(store.snapshot().tasks[0].status,'ONGOING DEV');
   const reopened=await createDemoStore(file);
   assert.equal(reopened.snapshot().deployments.length,2);
 });

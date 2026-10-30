@@ -1,3 +1,4 @@
+import { normalizeTaskStatus, isTestingStatus } from '../../shared/task-statuses.js';
 import { isComplete, statuses } from '../task-utils.js';
 
 const dateOnly = value => value ? String(value).slice(0, 10) : null;
@@ -14,15 +15,15 @@ export function buildOverviewReport(tasks, people, now = new Date()) {
   const dueSoon = t => !isComplete(t) && dateOnly(t.dueDate) >= today && dateOnly(t.dueDate) <= lastDay;
   const summarize = set => ({ total: set.length, active: set.filter(t => !isComplete(t)).length,
     completed: set.filter(isComplete).length, overdue: set.filter(overdue).length,
-    testing: set.filter(t => t.status === 'In testing').length, hours: sumHours(set.filter(t => !isComplete(t))),
+    testing: set.filter(t => isTestingStatus(t.status)).length, hours: sumHours(set.filter(t => !isComplete(t))),
     completionRate: set.length ? Math.round(set.filter(isComplete).length / set.length * 100) : null });
   const durations = completed.filter(t => t.createdAt && t.completedAt)
     .map(t => (new Date(t.completedAt) - new Date(t.createdAt)) / 86400000).filter(days => Number.isFinite(days) && days >= 0);
   return {
     summary: summarize(tasks),
     types: ['Enhancement', 'Bug'].map(type => ({ type, ...summarize(tasks.filter(t => t.type === type)) })),
-    statuses: statuses.map(status => ({ status, enhancement: tasks.filter(t => t.status === status && t.type === 'Enhancement').length,
-      bug: tasks.filter(t => t.status === status && t.type === 'Bug').length, total: tasks.filter(t => t.status === status).length })),
+    statuses: statuses.map(status => ({ status, enhancement: tasks.filter(t => normalizeTaskStatus(t.status) === status && t.type === 'Enhancement').length,
+      bug: tasks.filter(t => normalizeTaskStatus(t.status) === status && t.type === 'Bug').length, total: tasks.filter(t => normalizeTaskStatus(t.status) === status).length })),
     priorities: ['Urgent', 'High', 'Normal', 'Low'].map(priority => ({ priority,
       enhancement: active.filter(t => t.priority === priority && t.type === 'Enhancement').length,
       bug: active.filter(t => t.priority === priority && t.type === 'Bug').length,

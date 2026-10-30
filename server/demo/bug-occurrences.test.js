@@ -27,14 +27,14 @@ test('recurrences persist with related tickets, host identity, explicit release 
   assert.equal((await request('/tasks/1/occurrences','POST',report)).status,201);
   const saved=(await createDemoStore(file)).snapshot();
   assert.equal(saved.bugOccurrences.length,1);assert.equal(saved.bugOccurrences[0].actorId,'host-tester');assert.equal(saved.bugOccurrences[0].deploymentId,1);
-  assert.equal(saved.tasks[0].status,'Open');assert.equal(saved.tasks[0].completedAt,null);assert.deepEqual(saved.tasks[0].relatedTickets,['HD-ONE','HD-TWO']);
+  assert.equal(saved.tasks[0].status,'OPEN');assert.equal(saved.tasks[0].completedAt,null);assert.deepEqual(saved.tasks[0].relatedTickets,['HD-ONE','HD-TWO']);
   assert.match(saved.history.at(-1).notes,/Recurrence reported/);
   assert.equal((await (await request('/bug-occurrences')).json())[0].reference,'HD-RECURRENT');
   const {relatedTickets,...legacyUpdate}=task;
   assert.equal((await request('/tasks/1','PUT',legacyUpdate)).status,200);
   assert.deepEqual(store.snapshot().tasks[0].relatedTickets,['HD-ONE','HD-TWO']);
   assert.equal((await request('/tasks/1/occurrences','POST',{...report,reopen:false,deploymentId:null})).status,201);
-  assert.equal(store.snapshot().tasks[0].status,'Closed');
+  assert.equal(store.snapshot().tasks[0].status,'COMPLETE');
   const resolutions=await (await request('/task-resolutions')).json();
   assert.equal(resolutions.filter(event=>event.taskId===1).length,2);
   const enhancement={...task,title:'Demo enhancement module',type:'Enhancement',system:'Client Portal',moduleName:'Billing',status:'Open'};

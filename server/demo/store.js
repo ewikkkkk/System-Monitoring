@@ -34,6 +34,8 @@ export async function createDemoStore(file) {
     await mkdir(dirname(file), { recursive: true });
     await writeFile(file, JSON.stringify(state, null, 2), { flag: 'wx' });
   }
+  // Make the local host's fixed identity assignable without impersonating a sample person.
+  if(!state.people.some(person=>person.userId==='demo-local-user'))state.people.push({userId:'demo-local-user',displayName:'Local demo user (you)',assignmentRole:'both'});
   let pending = Promise.resolve();
   return {
     snapshot: () => structuredClone(state),

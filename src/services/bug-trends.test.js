@@ -70,3 +70,11 @@ test('new task systems are fixed while unchanged legacy values remain editable',
   assert.equal(validTaskSystem('Other'),false);assert.equal(validTaskSystem('Other','Other'),true);
   assert.equal(validTaskSystem('Wrong','Other'),false);assert.equal(validTaskSystem('WMS','Other'),true);
 });
+
+test('ClickUp completions and legacy aliases share resolution boundaries while development live stays pending',()=>{
+ const history=['Open','Prod live','PROD LIVE (HYPERCARE)','Closed','COMPLETE','MALFUNCTIONING (PL)','DEV LIVE','PROD LIVE (HYPERCARE)'].map((status,index)=>({id:index+1,taskId:1,status,changedAt:new Date(2026,9,22,8,index).toISOString()}));
+ assert.deepEqual(taskResolutions(history).map(event=>event.id),[2,8]);
+ const now=new Date(2026,9,22,12),createdAt=new Date(2026,9,20).toISOString();
+ const tasks=['DEV LIVE','MALFUNCTIONING (PL)','FOR MONITORING','PROD LIVE (HYPERCARE)','COMPLETE'].map((status,id)=>({id:id+1,type:id===2?'Enhancement':'Bug',status,createdAt}));
+ const trend=buildBugTrend(tasks,[],[],{now,days:7});assert.equal(trend.pendingBugs,2);assert.equal(trend.pendingEnhancements,1);
+});

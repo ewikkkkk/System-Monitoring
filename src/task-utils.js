@@ -1,6 +1,7 @@
-export const statuses = ['Open', 'In progress', 'In testing', 'Ready for release', 'Prod live', 'Closed'];
-export const blankTask = { title: '', reference: '', relatedTickets: [], system: 'WMS', moduleName: '', type: 'Bug', status: 'Open', priority: 'Normal', developerId: '', testerId: '', dueDate: '', estimateHours: '', description: '', notes: '' };
+import { taskStatuses, isCompletedStatus } from '../shared/task-statuses.js';
+export const statuses = taskStatuses;
+export const blankTask = { title: '', reference: '', relatedTickets: [], system: 'WMS', moduleName: '', remarks:'', type: 'Bug', status: 'OPEN', priority: 'Normal', developerId: '', testerId: '', dueDate: '', targetDeploymentDate:'', estimateHours: '', description: '', notes: '' };
 export const formatDate = value => value ? new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(value)) : '—';
 export { formatTaskNumber as taskReference } from '../shared/task-number.js';
-export const isComplete = task => ['Prod live', 'Closed'].includes(task.status);
+export const isComplete = task => isCompletedStatus(task.status);
 export const unfinishedStatuses = statuses.filter(status => !isComplete({ status }));

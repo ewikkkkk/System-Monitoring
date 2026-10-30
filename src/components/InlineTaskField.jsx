@@ -1,0 +1,7 @@
+import React,{useEffect,useState} from 'react';
+export default function InlineTaskField({label,value,onChange,multiline=false,type='text',maxLength,disabled=false,resetKey,previewLimit}){
+ const [editing,setEditing]=useState(false),[expanded,setExpanded]=useState(false);
+ const long=previewLimit&&String(value??'').length>previewLimit;
+ useEffect(()=>setEditing(false),[resetKey]);
+ return editing?<label className="sysmon-inline-field">{label}{multiline?<textarea autoFocus className="sysmon-input sysmon-inline-textarea" value={value??''} maxLength={maxLength} disabled={disabled} onChange={event=>onChange(event.target.value)}/>:<input autoFocus className="sysmon-input" type={type} value={value??''} maxLength={maxLength} disabled={disabled} onInput={event=>{if(type==='date')onChange(event.currentTarget.value);}} onChange={event=>onChange(event.target.value)} onKeyDown={event=>{if(event.key==='Enter')setEditing(false);}}/>}</label>:<><button type="button" className="sysmon-inline-edit" aria-label={`Edit ${label.toLowerCase()}`} disabled={disabled} onClick={()=>setEditing(true)}>{long&&!expanded?`${String(value).slice(0,previewLimit)}…`:value||`Add ${label.toLowerCase()}…`}</button>{long&&<button type="button" className="sysmon-conversation-expand" aria-label={`${expanded?'Show less':'Show more'} ${label.toLowerCase()}`} aria-expanded={expanded} onClick={()=>setExpanded(!expanded)}>{expanded?'Show less':'Show more'}</button>}</>;
+}

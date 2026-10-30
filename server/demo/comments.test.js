@@ -1,0 +1,50 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import express from 'express';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {randomUUID} from 'node:crypto';
+import {createDemoStore} from './store.js';
+import {createDemoMonitoringRouter} from './router.js';
+test('task conversations preserve authors, dates, retries and atomic own-comment edits across accounts',async t=>{
+ const dir=await mkdtemp(join(tmpdir(),'sysmon-comments-')),file=join(dir,'demo.json'),store=await createDemoStore(file);let actor='demo-alex';
+ const app=express();app.use((req,res,next)=>{req.user=actor?{userId:actor}:null;next();});app.use(createDemoMonitoringRouter(store));
+ const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+ t.after(async()=>{await new Promise(resolve=>server.close(resolve));await rm(dir,{recursive:true,force:true});});
+ const request=(path,body)=>fetch(`http://127.0.0.1:${server.address().port}${path}`,body?{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});
+ const allTasks=await(await request('/tasks')).json();
+ for(const account of ['demo-alex','demo-sam','unassigned-account']){
+  actor=account;const mine=await(await request('/my-tasks?userId=demo-jamie')).json();
+  assert.deepEqual(mine.map(task=>task.id).sort(),allTasks.filter(task=>task.developerId===account||task.testerId===account).map(task=>task.id).sort());
+ }
+ actor=null;assert.equal((await request('/my-tasks?userId=demo-alex')).status,401);actor='demo-alex';
+ assert.ok((await(await request('/people')).json()).some(person=>person.userId==='demo-local-user'&&person.assignmentRole==='both'));
+ const task=(await(await request('/tasks')).json()).find(task=>task.id===1),comment={requestId:randomUUID(),text:'Developer update'};
+ assert.equal((await request('/tasks/1',{...task,title:'Updated inline',remarks:'Back to tech: check duplicate transactions',newComment:comment,actorId:'forged'})).status,200);
+ assert.equal((await request('/tasks/1',{...task,title:'Updated inline',remarks:'Back to tech: check duplicate transactions',newComment:comment})).status,200);
+ let comments=await(await request('/tasks/1/comments')).json();assert.equal(comments.length,1);assert.equal(comments[0].actorId,'demo-alex');assert.equal(comments[0].authorName,'Alex Rivera');assert.equal(comments[0].canEdit,true);const originalDate=comments[0].createdAt,id=comments[0].id;
+ actor='demo-sam';assert.equal((await(await request('/tasks/1/comments')).json())[0].canEdit,false);
+ assert.equal((await request('/tasks/1',{...task,title:'FORGED UPDATE',commentEdits:[{id,text:'Overwrite another user'}]})).status,403);
+ assert.equal(store.snapshot().tasks.find(task=>task.id===1).title,'Updated inline');assert.equal(store.snapshot().tasks.find(task=>task.id===1).remarks,'Back to tech: check duplicate transactions');assert.equal(store.snapshot().comments[0].text,'Developer update');
+ assert.equal((await request('/tasks/1',{...task,title:'Tester update',newComment:{requestId:randomUUID(),text:'Testing completed'}})).status,200);
+ actor='demo-alex';assert.equal((await request('/tasks/1',{...task,commentEdits:[{id,text:'Developer correction'}]})).status,200);
+ comments=await(await request('/tasks/1/comments')).json();assert.equal(comments.length,2);assert.equal(comments[0].createdAt,originalDate);assert.ok(comments[0].editedAt);assert.equal(comments[0].text,'Developer correction');assert.equal(comments[1].actorId,'demo-sam');assert.equal(comments[1].canEdit,false);
+ for(const extra of [{commentEdits:[{id,text:' '}]},{newComment:{requestId:'bad',text:'x'}},{newComment:{requestId:randomUUID(),text:'x'.repeat(4001)}},{commentEdits:[{id,text:'a'},{id,text:'b'}]}])assert.equal((await request('/tasks/1',{...task,...extra})).status,400);
+ const beforeRemarks=await(await request('/tasks')).json(),current=beforeRemarks.find(row=>row.id===1);
+ assert.equal(current.remarks,'');
+ assert.equal((await request('/tasks/1',{...current,remarks:'Good for test'})).status,200);
+ const {remarks,targetDeploymentDate:omittedTarget,...legacyClient}=current;await request('/tasks/1',legacyClient);assert.equal(store.snapshot().tasks.find(row=>row.id===1).remarks,'Good for test');
+ assert.equal((await request('/tasks/1',{...current,remarks:42})).status,400);assert.equal((await request('/tasks/1',{...current,remarks:'x'.repeat(1001)})).status,400);
+ assert.equal((await request('/tasks/1',{...current,targetDeploymentDate:'2026-11-05'})).status,200);
+ await request('/tasks/1',legacyClient);assert.equal(store.snapshot().tasks.find(row=>row.id===1).targetDeploymentDate,'2026-11-05');
+ assert.equal((await request('/tasks/1',{...current,targetDeploymentDate:'2026-02-30'})).status,400);
+ assert.equal((await request('/tasks/1',{...current,targetDeploymentDate:''})).status,200);assert.equal(store.snapshot().tasks.find(row=>row.id===1).targetDeploymentDate,null);
+ const timeline=await(await request('/task-timeline')).json();assert.ok(timeline.some(row=>row.taskId===2&&row.firstDevAt));
+ const reopened=await createDemoStore(file);assert.equal(reopened.snapshot().comments.length,2);
+ actor=null;assert.equal((await request('/tasks/1/comments')).status,401);assert.equal((await request('/tasks/1',{...task,newComment:comment})).status,401);
+ assert.equal((await request('/tasks/9999/comments')).status,401);actor='demo-alex';assert.equal((await request('/tasks/9999/comments')).status,404);
+ const created=await fetch(`http://127.0.0.1:${server.address().port}/tasks`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...task,system:'WMS',notes:'',newComment:{requestId:randomUUID(),text:'First comment from task creation'}})});
+ assert.equal(created.status,201);const saved=await created.json(),initial=await(await request(`/tasks/${saved.id}/comments`)).json();assert.equal(initial.length,1);assert.equal(initial[0].actorId,'demo-alex');assert.equal(initial[0].text,'First comment from task creation');
+
+});

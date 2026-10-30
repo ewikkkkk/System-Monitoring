@@ -1,3 +1,4 @@
+import { isCompletedStatus } from '../../shared/task-statuses.js';
 import { localDayKey } from './deployment-report.js';
 
 export function buildBugTrend(tasks, occurrences, deployments, { days = 30, now = new Date(), system = '', resolutions = [] } = {}) {
@@ -5,7 +6,7 @@ export function buildBugTrend(tasks, occurrences, deployments, { days = 30, now 
   start.setDate(start.getDate() - days + 1);
   const scoped = tasks.filter(task => !system || (task.system || '') === system);
   const byId = new Map(scoped.map(task=>[task.id,task]));
-  const isComplete = task => ['Prod live','Closed'].includes(task.status);
+  const isComplete = task => isCompletedStatus(task.status);
   const resolved = resolutions.filter(event=>byId.has(event.taskId) && Number.isFinite(Date.parse(event.occurredAt)) && Date.parse(event.occurredAt)<=now.getTime()).map(event=>({...event,task:byId.get(event.taskId),source:'history'}));
   const withHistory = new Set(resolved.map(event=>event.taskId));
   for (const task of scoped) {

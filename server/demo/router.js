@@ -1,18 +1,19 @@
 // Throwaway local demo adapter; the METS Hub integration uses server/index.js.
 import { Router, json } from 'express';
+import { validCommentChanges } from '../../shared/task-comments.js';
 import { validDeployment } from '../deployment-validation.js';
 import { formatTaskNumber } from '../../shared/task-number.js';
 import { validVoucher, validVoucherUsage, voucherOutcome, validVoucherImport } from '../voucher-validation.js';
 import { validRelatedTickets } from '../../shared/related-tickets.js';
 import { validBugOccurrence } from '../bug-validation.js';
-import { validTaskSystem, validTaskModule } from '../../shared/task-fields.js';
+import { validTaskSystem, validTaskModule, validTaskRemarks, validTargetDeploymentDate } from '../../shared/task-fields.js';
 import { taskResolutions } from '../../shared/task-resolutions.js';
 import { prepareTicketReport, ticketReportSummary } from '../ticket-report-validation.js';
 import { createDemoTeamsRepository } from '../teams/repositories.js';
 import { teamsStatus, prepareTeamsReport, sendTeamsReport } from '../teams/delivery.js';
 
-const statuses = ['Open', 'In progress', 'In testing', 'Ready for release', 'Prod live', 'Closed'];
-const completed = status => ['Prod live', 'Closed'].includes(status);
+import { normalizeTaskStatus, validTaskStatus, isCompletedStatus } from '../../shared/task-statuses.js';
+const completed = isCompletedStatus;
 export function createDemoMonitoringRouter(store) {
   const r = Router();
   r.use('/ticket-reports',json({limit:'3mb'}));
@@ -56,13 +57,30 @@ export function createDemoMonitoringRouter(store) {
     const {requestId,...view}=result;res.status(201).json(view);
   });
   r.get('/people', (req, res) => res.json(store.snapshot().people));
+  function taskViews(tasks,people){
+    return tasks.map(t=>({...t,remarks:t.remarks||'',status:normalizeTaskStatus(t.status),moduleName:t.moduleName||'',relatedTickets:t.relatedTickets||[],taskNumber:formatTaskNumber(t),developerName:people.find(p=>p.userId===t.developerId)?.displayName||null,testerName:people.find(p=>p.userId===t.testerId)?.displayName||null})).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
+  }
+  r.get('/my-tasks',(req,res)=>{
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    const {tasks,people}=store.snapshot(),actor=String(req.user.userId);
+    res.json(taskViews(tasks.filter(task=>task.developerId===actor||task.testerId===actor),people));
+  });
   r.get('/tasks', (req, res) => {
     const { tasks, people } = store.snapshot();
-    res.json(tasks.map(t => ({ ...t, moduleName:t.moduleName||'', relatedTickets:t.relatedTickets||[],
+    res.json(tasks.map(t => ({ ...t, remarks:t.remarks||'', status:normalizeTaskStatus(t.status), moduleName:t.moduleName||'', relatedTickets:t.relatedTickets||[],
       taskNumber: formatTaskNumber(t),
       developerName: people.find(p => p.userId === t.developerId)?.displayName || null,
       testerName: people.find(p => p.userId === t.testerId)?.displayName || null
     })).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+  });
+  r.get('/tasks/:id/comments',(req,res)=>{
+    if(!req.user?.userId)return res.status(401).json({error:'Host user context is required'});
+    const id=Number(req.params.id),state=store.snapshot();
+    if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Invalid task ID'});
+    if(!state.tasks.some(task=>task.id===id))return res.status(404).json({error:'Task not found'});
+    res.json((state.comments||[]).filter(comment=>comment.taskId===id).map(({requestId,...comment})=>({...comment,
+      authorName:state.people.find(person=>person.userId===comment.actorId)?.displayName||comment.actorId,
+      canEdit:comment.actorId===String(req.user.userId)})).sort((a,b)=>a.createdAt.localeCompare(b.createdAt)||a.id-b.id));
   });
   r.get('/tasks/:id/history', (req, res) => {
     const id = Number(req.params.id);
@@ -70,6 +88,11 @@ export function createDemoMonitoringRouter(store) {
     res.json(store.snapshot().history.filter(h => h.taskId === id).sort((a, b) => b.id - a.id));
   });
   r.post('/tasks', save);
+  r.get('/task-timeline',(req,res)=>{
+    const starts=new Map();
+    for(const entry of store.snapshot().history){if(normalizeTaskStatus(entry.status)!=='ONGOING DEV'||!Number.isFinite(Date.parse(entry.changedAt)))continue;const previous=starts.get(entry.taskId);if(!previous||Date.parse(entry.changedAt)<Date.parse(previous))starts.set(entry.taskId,entry.changedAt);}
+    res.json([...starts].map(([taskId,firstDevAt])=>({taskId,firstDevAt})));
+  });
   r.get('/task-resolutions',(req,res)=>res.json(taskResolutions(store.snapshot().history).reverse()));
   r.get('/bug-occurrences',(req,res)=>res.json((store.snapshot().bugOccurrences||[]).sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt)||b.id-a.id)));
   r.post('/tasks/:id/occurrences',async(req,res)=>{
@@ -85,7 +108,7 @@ export function createDemoMonitoringRouter(store) {
       const occurrenceId=Math.max(0,...state.bugOccurrences.map(event=>event.id))+1,now=new Date().toISOString(),actor=String(req.user.userId);
       state.bugOccurrences.push({id:occurrenceId,taskId:id,occurredAt:new Date(b.occurredAt).toISOString(),reference:b.reference.trim(),notes:b.notes.trim(),deploymentId:b.deploymentId??null,recordedAt:now,actorId:actor});
       Object.assign(task,{updatedAt:now,updatedBy:actor});
-      if(b.reopen&&completed(task.status))Object.assign(task,{status:'Open',completedAt:null,updatedAt:now,updatedBy:actor});
+      if(b.reopen&&completed(task.status))Object.assign(task,{status:'OPEN',completedAt:null,updatedAt:now,updatedBy:actor});
       state.history.push({id:Math.max(0,...state.history.map(h=>h.id))+1,taskId:id,actorId:actor,status:task.status,notes:`Recurrence reported. ${b.notes.trim()}`,changedAt:now});
       return {id:occurrenceId};
     });
@@ -168,8 +191,8 @@ export function createDemoMonitoringRouter(store) {
   r.put('/tasks/:id', save);
   r.patch('/tasks/:id/status', async (req, res) => {
     if (!req.user?.userId) return res.status(401).json({ error: 'Host user context is required' });
-    const id = Number(req.params.id), status = req.body?.status;
-    if (!Number.isSafeInteger(id) || id < 1 || !statuses.includes(status)) return res.status(400).json({ error: 'Invalid task or status' });
+    const id = Number(req.params.id), status = normalizeTaskStatus(req.body?.status);
+    if (!Number.isSafeInteger(id) || id < 1 || !validTaskStatus(status)) return res.status(400).json({ error: 'Invalid task or status' });
     const result = await store.update(state => {
       const task = state.tasks.find(t => t.id === id);
       if (!task) return null;
@@ -211,12 +234,13 @@ export function createDemoMonitoringRouter(store) {
     if (!req.user?.userId) return res.status(401).json({ error: 'Host user context is required' });
     const id = req.params.id ? Number(req.params.id) : null;
     const b = req.body || {};
+    if(!validCommentChanges(b))return res.status(400).json({error:'Comments must contain 1–4000 characters; refresh before retrying invalid comment edits.'});
     const strings = { title: 240, reference: 80, system: 100, description: 8000, notes: 8000 };
     const validDate = !b.dueDate || (typeof b.dueDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.dueDate) && !Number.isNaN(Date.parse(b.dueDate)) && new Date(b.dueDate).toISOString().slice(0, 10) === b.dueDate);
     if ((id !== null && (!Number.isSafeInteger(id) || id < 1)) ||
       Object.entries(strings).some(([k, max]) => typeof b[k] !== 'string' || b[k].length > max) || !b.title?.trim() ||
-      !['Bug', 'Enhancement'].includes(b.type) || !statuses.includes(b.status) || !['Low', 'Normal', 'High', 'Urgent'].includes(b.priority) ||
-      !validRelatedTickets(b.relatedTickets) || !validTaskModule(b.moduleName) || !validDate || (b.estimateHours != null && (!Number.isFinite(b.estimateHours) || b.estimateHours < 0 || b.estimateHours > 9999))) {
+      !['Bug', 'Enhancement'].includes(b.type) || !validTaskStatus(b.status) || !['Low', 'Normal', 'High', 'Urgent'].includes(b.priority) ||
+      !validRelatedTickets(b.relatedTickets) || !validTaskModule(b.moduleName) || !validTaskRemarks(b.remarks) || !validTargetDeploymentDate(b.targetDeploymentDate) || !validDate || (b.estimateHours != null && (!Number.isFinite(b.estimateHours) || b.estimateHours < 0 || b.estimateHours > 9999))) {
       return res.status(400).json({ error: 'Check required fields, dates, and field lengths' });
     }
     const people = store.snapshot().people;
@@ -230,22 +254,28 @@ export function createDemoMonitoringRouter(store) {
       const old = id === null ? null : state.tasks.find(t => t.id === id);
       if (id !== null && !old) return null;
       if(!validTaskSystem(b.system,old?.system))return {error:'Choose WMS, Client Portal, RF Barcoding, PISA, CMMS or TOLL'};
+      const actor=String(req.user.userId),comments=state.comments||[];
+      if((b.commentEdits||[]).some(edit=>!comments.some(comment=>comment.id===edit.id&&comment.taskId===id&&comment.actorId===actor)))return {error:'Only your own comments can be edited',statusCode:403};
+      if(b.newComment&&comments.some(comment=>comment.requestId===b.newComment.requestId&&(comment.taskId!==id||comment.actorId!==actor)))return {error:'Comment request belongs to another task or author',statusCode:403};
       const now = new Date().toISOString();
       const taskId = old?.id ?? Math.max(0, ...state.tasks.map(t => t.id)) + 1;
       const task = {
         id: taskId, ...Object.fromEntries(Object.keys(strings).map(k => [k, b[k]])), title: b.title.trim(),
-        type: b.type, status: b.status, priority: b.priority, developerId: b.developerId || null, testerId: b.testerId || null,
-        dueDate: b.dueDate || null, estimateHours: b.estimateHours ?? null, moduleName:b.moduleName===undefined?(old?.moduleName||''):b.moduleName.trim(), relatedTickets:b.relatedTickets===undefined?(old?.relatedTickets||[]):[...new Set(b.relatedTickets.map(reference=>reference.trim()))],
+        type: b.type, status: normalizeTaskStatus(b.status), priority: b.priority, developerId: b.developerId || null, testerId: b.testerId || null,
+        dueDate: b.dueDate || null, estimateHours: b.estimateHours ?? null, targetDeploymentDate:b.targetDeploymentDate===undefined?(old?.targetDeploymentDate||null):b.targetDeploymentDate||null, remarks:b.remarks===undefined?(old?.remarks||''):b.remarks.trim(), moduleName:b.moduleName===undefined?(old?.moduleName||''):b.moduleName.trim(), relatedTickets:b.relatedTickets===undefined?(old?.relatedTickets||[]):[...new Set(b.relatedTickets.map(reference=>reference.trim()))],
         createdBy: old?.createdBy || String(req.user.userId), updatedBy: String(req.user.userId),
         createdAt: old?.createdAt || now, updatedAt: now, completedAt: completed(b.status) ? old?.completedAt || now : null
       };
+      for(const edit of b.commentEdits||[]){const comment=comments.find(comment=>comment.id===edit.id);comment.text=edit.text.trim();comment.editedAt=now;}
+      if(b.newComment&&!comments.some(comment=>comment.requestId===b.newComment.requestId))comments.push({id:Math.max(0,...comments.map(comment=>comment.id))+1,taskId,actorId:actor,text:b.newComment.text.trim(),requestId:b.newComment.requestId,createdAt:now,editedAt:null});
+      state.comments=comments;
       if (old) state.tasks[state.tasks.findIndex(t => t.id === taskId)] = task;
       else state.tasks.push(task);
-      state.history.push({ id: Math.max(0, ...state.history.map(h => h.id)) + 1, taskId, actorId: String(req.user.userId), status: b.status, notes: b.notes, changedAt: now });
+      state.history.push({ id: Math.max(0, ...state.history.map(h => h.id)) + 1, taskId, actorId: String(req.user.userId), status: normalizeTaskStatus(b.status), notes: b.newComment?`Comment added. ${b.newComment.text.trim()}`:b.commentEdits?.length?'Conversation comment edited.':b.notes, changedAt: now });
       return { id: taskId };
     });
     if (!result) return res.status(404).json({ error: 'Task not found' });
-    if(result.error)return res.status(400).json(result);
+    if(result.error)return res.status(result.statusCode||400).json({error:result.error});
     res.status(id ? 200 : 201).json(result);
   }
   r.use((error, req, res, next) => {

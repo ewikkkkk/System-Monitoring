@@ -1,3 +1,4 @@
+import { normalizeTaskStatus, isCompletedStatus } from './task-statuses.js';
 export function parseRelatedTickets(value) {
   return [...new Map(String(value || '').split(/[,\n]/).map(reference => reference.trim()).filter(Boolean).map(reference => [reference.toLowerCase(), reference])).values()];
 }
@@ -5,5 +6,5 @@ export const validRelatedTickets = value => value === undefined || (Array.isArra
 export const readRelatedTickets = value => Array.isArray(value) ? value : value ? JSON.parse(value) : [];
 
 export function listTasksForStatus(tasks, status) {
-  return tasks.filter(task => status ? task.status === status : !['Prod live', 'Closed'].includes(task.status));
+  return tasks.filter(task => status ? normalizeTaskStatus(task.status) === normalizeTaskStatus(status) : !isCompletedStatus(task.status));
 }

@@ -25,6 +25,7 @@ async function request(path, options = {}) {
   return data;
 }
 export const getTasks = () => request('/tasks');
+export const getMyTasks = () => request('/my-tasks');
 export const getTicketReports = () => request('/ticket-reports');
 export const getTicketReport = async id => withReportTicketLinks(await request(`/ticket-reports/${encodeURIComponent(id)}`));
 export const saveTicketReport = body => request('/ticket-reports',{method:'POST',body:JSON.stringify(body)});
@@ -48,6 +49,7 @@ export function withReportTicketLinks(report) {
 export const getPeople = () => request('/people');
 export const getDeployments = () => request('/deployments');
 export const getBugOccurrences = () => request('/bug-occurrences');
+export const getTaskTimeline = () => request('/task-timeline');
 export const getTaskResolutions = () => request('/task-resolutions');
 export const logBugOccurrence = (id,body) => request(`/tasks/${encodeURIComponent(id)}/occurrences`,{method:'POST',body:JSON.stringify(body)});
 export const getVouchers = () => request('/vouchers');
@@ -58,5 +60,6 @@ export const useVoucher = (id,body) => request(`/vouchers/${encodeURIComponent(i
 export const getVoucherHistory = id => request(`/vouchers/${encodeURIComponent(id)}/history`);
 export const logDeployment = body => request('/deployments', { method: 'POST', body: JSON.stringify(body) });
 export const changeTaskStatus = (id, status) => request(`/tasks/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
+export const getTaskComments = id => request(`/tasks/${encodeURIComponent(id)}/comments`);
 export const getTaskHistory = id => request(`/tasks/${encodeURIComponent(id)}/history`);
 export const saveTask = (id, body) => request(id ? `/tasks/${encodeURIComponent(id)}` : '/tasks', { method: id ? 'PUT' : 'POST', body: JSON.stringify(body) });
