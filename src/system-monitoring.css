@@ -454,6 +454,10 @@
 .sysmon-ticket-report-actions>div{flex:1 1 280px}
 .sysmon-ticket-report-actions .sysmon-report-note{margin:5px 0 0}
 .sysmon-ticket-report{padding:26px 0;overflow-wrap:anywhere}
+.sysmon-weekly-import{justify-self:start;align-self:end}
+.sysmon-weekly-options .sysmon-input{min-width:0;width:100%;box-sizing:border-box}
+.sysmon-weekly-report p{margin:6px 0}
+.sysmon-weekly-subheading{margin:14px 0 6px;font-size:inherit}
 .sysmon-ticket-status-section{padding:20px 0;border-bottom:1px solid var(--sm-border)}
 .sysmon-ticket-status-title{font-size:14px;text-transform:uppercase;letter-spacing:.03em;margin:0 0 18px;display:flex;gap:10px;align-items:center}
 .sysmon-ticket-assignee{margin:18px 0}
@@ -783,8 +787,9 @@
 .sysmon-deployment-date-line{position:relative;z-index:1;display:block;width:100%;height:68px;margin:0;padding:0;border:0;background:transparent;color:var(--sm-text);font:inherit;font-size:11px;cursor:pointer;text-align:left;overflow:hidden}
 .sysmon-deployment-date-line:hover{color:var(--sm-accent)}
 .sysmon-deployment-date-line:focus-visible{outline:2px solid var(--sm-accent);outline-offset:-2px}
-.sysmon-deployment-date-rule{position:absolute;top:50px;height:3px;background:var(--sm-gantt-state,var(--sm-accent));opacity:.85}
-.sysmon-deployment-group-target{position:absolute;top:46px;width:10px;height:10px;background:var(--sm-gantt-state,var(--sm-accent));transform:translateX(-50%) rotate(45deg)}
+.sysmon-deployment-date-rule{position:absolute;top:50px;height:3px;background:var(--sm-green)}
+.sysmon-deployment-date-overdue{background:var(--sm-red)}
+.sysmon-deployment-group-target{position:absolute;top:46px;width:10px;height:10px;background:var(--sm-green);transform:translateX(-50%) rotate(45deg)}
 .sysmon-deployment-target-label{position:absolute;top:5px;transform:translateX(-50%);white-space:nowrap;color:var(--sm-gantt-state,var(--sm-accent));font-weight:600;text-align:center}
 .sysmon-deployment-target-outside{position:absolute;left:12px;top:16px;color:var(--sm-muted);white-space:nowrap}
 .sysmon-deployment-group-status{display:block;font-size:10px;font-weight:400}
@@ -794,7 +799,8 @@
 .sysmon-gantt-state-deployment{--sm-gantt-state:var(--sm-amber)}
 .sysmon-gantt-state-live{--sm-gantt-state:var(--sm-green)}
 .sysmon-gantt-state-missed{--sm-gantt-state:var(--sm-red)}
-.sysmon-deployment-track .sysmon-gantt-bar,.sysmon-deployment-track .sysmon-gantt-target{background:var(--sm-gantt-state,var(--sm-green))}
+.sysmon-deployment-track .sysmon-gantt-bar{background:linear-gradient(to right,var(--sm-green) var(--sm-gantt-planned-share),var(--sm-red) var(--sm-gantt-planned-share))}
+.sysmon-deployment-track .sysmon-gantt-target{background:var(--sm-green)}
 .sysmon-gantt-legend{display:flex;flex-wrap:wrap;gap:8px 18px;margin:12px 0;color:var(--sm-muted);font-size:11px}
 .sysmon-gantt-legend-item{display:inline-flex;align-items:center;gap:6px}
 .sysmon-gantt-legend-dot{width:8px;height:8px;border-radius:50%;background:var(--sm-gantt-state)}

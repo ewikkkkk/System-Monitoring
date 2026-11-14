@@ -12,9 +12,9 @@ test('deployment planning excludes unscheduled and development tasks and groups 
 
 test('timeline clips bars to the displayed range, retains target markers and flags backwards plans',()=>{
  const windowStart=dayIndex('2026-10-20'),position=timelinePosition({start:'2026-10-18',end:'2026-10-22',target:'2026-10-22'},windowStart,10);
- assert.equal(position.left,0);assert.equal(position.width,30);assert.equal(position.target,25);
- assert.equal(timelinePosition({start:'',end:'2026-10-22',target:'2026-10-22'},windowStart,10).width,0);
- assert.equal(timelinePosition({start:'2026-11-01',end:'2026-11-05',target:'2026-11-05'},windowStart,10).width,0);
+ assert.deepEqual(position,{planned:{left:0,width:25},overdue:null,target:25});
+ assert.equal(timelinePosition({start:'',target:'2026-10-22'},windowStart,10).planned,null);
+ assert.equal(timelinePosition({start:'2026-11-01',target:'2026-11-05'},windowStart,10).planned,null);
  const groups=buildGanttReport([{id:1,status:'FOR TESTING (DL)',createdAt:at(20),targetDeploymentDate:'2026-10-21'}],[{taskId:1,firstDevAt:at(22)}],{now});assert.match(groups[0].rows[0].issue,/precedes/);
 });
 test('target dates validate real calendar dates and allow explicit clearing or omission',()=>{
@@ -33,17 +33,33 @@ test('group lines stop at the target day center and retain accurate alignment wh
  const group={key:'2026-11-05',rows:[{start:'2026-10-25',issue:''},{start:'2026-10-20',issue:''},{start:'2026-10-01',issue:'Target precedes development start'}]},start=dayIndex('2026-10-23');
  for(const days of [14,28,56]){
   const position=deploymentGroupPosition(group,start,days);
-  assert.equal(position.left,0);assert.equal(position.width,13.5/days*100);assert.equal(position.target,13.5/days*100);assert.equal(position.outside,'');
+  assert.deepEqual(position.planned,{left:0,width:13.5/days*100});assert.equal(position.target,13.5/days*100);
  }
  const visibleStart=deploymentGroupPosition({...group,rows:[{start:'2026-10-25',issue:''}]},start,28);
- assert.equal(visibleStart.left,2/28*100);assert.equal(visibleStart.width,11.5/28*100);
- const before=deploymentGroupPosition(group,dayIndex('2026-11-06'),14);assert.equal(before.width,0);assert.equal(before.target,null);assert.match(before.outside,/before/);
- const after=deploymentGroupPosition(group,dayIndex('2026-10-01'),14);assert.equal(after.width,0);assert.equal(after.target,null);assert.match(after.outside,/after/);
- const clipped=deploymentGroupPosition({...group,rows:[{start:'2026-10-01',issue:''}]},dayIndex('2026-10-01'),14);assert.equal(clipped.width,100);assert.equal(clipped.target,null);
- const missing=deploymentGroupPosition({...group,rows:[{start:'',issue:'Ongoing dev start not recorded'}]},start,28);assert.equal(missing.width,0);assert.equal(missing.target,13.5/28*100);
+ assert.deepEqual(visibleStart.planned,{left:2/28*100,width:11.5/28*100});
+ for(const date of ['2026-11-06','2026-10-01'])assert.deepEqual(deploymentGroupPosition(group,dayIndex(date),14),{planned:null,overdue:null,target:null});
+ const clipped=deploymentGroupPosition({...group,rows:[{start:'2026-10-01',issue:''}]},dayIndex('2026-10-01'),14);assert.equal(clipped.planned.width,100);assert.equal(clipped.target,null);
+ const missing=deploymentGroupPosition({...group,rows:[{start:'',issue:'Ongoing dev start not recorded'}]},start,28);assert.equal(missing.planned,null);assert.equal(missing.target,13.5/28*100);
 });
 
-test('missed deployment is red only after the target day while unfinished; task status drives other colors',()=>{
+test('unfinished deployment extends from the Nov 10 target to Nov 14, including when the target is off-screen',()=>{
+ const row={start:'2026-11-08',target:'2026-11-10'};
+ const group={key:row.target,rows:[row]};
+ const today='2026-11-14',rangeStart=dayIndex('2026-11-07');
+ const expected={planned:{left:1/14*100,width:2.5/14*100},overdue:{left:25,width:4/14*100},target:25};
+ assert.deepEqual(timelinePosition(row,rangeStart,14,today),expected);
+ assert.deepEqual(deploymentGroupPosition(group,rangeStart,14,today),expected);
+ const clipped={planned:null,overdue:{left:0,width:2.5/14*100},target:null};
+ assert.deepEqual(timelinePosition(row,dayIndex('2026-11-12'),14,today),clipped);
+ assert.deepEqual(deploymentGroupPosition(group,dayIndex('2026-11-12'),14,today),clipped);
+ assert.equal(timelinePosition(row,dayIndex('2026-11-15'),14,today).overdue,null);
+ assert.equal(timelinePosition(row,rangeStart,14,row.target).overdue,null);
+ assert.equal(timelinePosition({...row,start:''},rangeStart,14,today).planned,null);
+ assert.deepEqual(timelinePosition({...row,start:''},rangeStart,14,today).overdue,expected.overdue);
+ assert.equal(timelinePosition(row,rangeStart,14).overdue,null);
+});
+
+test('missed deployment applies only after the target day while unfinished; workflow labels remain available',()=>{
  const task={status:'FOR DEPLOYMENT (PL)',targetDeploymentDate:'2026-10-29'},today='2026-10-30';
  assert.equal(deploymentTaskAppearance(task,today).key,'missed');
  assert.equal(deploymentTaskAppearance({...task,targetDeploymentDate:today},today).key,'deployment');

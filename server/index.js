@@ -9,6 +9,7 @@ import { readRelatedTickets, validRelatedTickets } from '../shared/related-ticke
 import { validBugOccurrence } from './bug-validation.js';
 import { taskSystems, validTaskModule, validTaskRemarks, validTargetDeploymentDate } from '../shared/task-fields.js';
 import { prepareTicketReport } from './ticket-report-validation.js';
+import { zapierReportDate, zapierReportPayload } from './zapier-report.js';
 import { sqlTeamsRepository } from './teams/repositories.js';
 import { teamsStatus, prepareTeamsReport, sendTeamsReport } from './teams/delivery.js';
 
@@ -50,6 +51,19 @@ export function createSystemMonitoringRouter(getPool) {
       total,unfinished,openCount AS [open],waiting,pending,internalCount AS internal,resolved,closed,overdue,actorId,createdAt
       FROM monitoring.TicketReports ORDER BY reportDate DESC,asOfTime DESC,id DESC`);
     res.json(result.recordset);
+  });
+  // Host: grant the Zapier service identity read access to this endpoint only.
+  r.get('/ticket-reports/zapier/daily', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user?.userId) return res.status(401).json({error: 'Host user context is required'});
+    const date = zapierReportDate();
+    const result = await query(`SELECT TOP (1) id, snapshotJson FROM monitoring.TicketReports
+      WHERE reportDate=@reportDate ORDER BY asOfTime DESC, id DESC`, {
+      reportDate: {type: sql.Date, value: date},
+    });
+    const row = result.recordset[0];
+    const report = row ? {...JSON.parse(row.snapshotJson), id: row.id} : null;
+    res.json(zapierReportPayload(report, date));
   });
   r.get('/ticket-reports/:id',async(req,res)=>{
     const id=Number(req.params.id);

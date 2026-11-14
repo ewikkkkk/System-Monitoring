@@ -10,6 +10,7 @@ import { validBugOccurrence } from '../bug-validation.js';
 import { validTaskSystem, validTaskModule, validTaskRemarks, validTargetDeploymentDate } from '../../shared/task-fields.js';
 import { taskResolutions } from '../../shared/task-resolutions.js';
 import { prepareTicketReport, ticketReportSummary } from '../ticket-report-validation.js';
+import { zapierReportDate, zapierReportPayload } from '../zapier-report.js';
 import { createDemoTeamsRepository } from '../teams/repositories.js';
 import { teamsStatus, prepareTeamsReport, sendTeamsReport } from '../teams/delivery.js';
 
@@ -42,6 +43,14 @@ export function createDemoMonitoringRouter(store) {
     const report=(store.snapshot().ticketReports||[]).find(report=>report.id===id);if(!report){res.status(404).json({error:'Report not found'});return;}return report;
   }
   r.get('/ticket-reports',(req,res)=>res.json((store.snapshot().ticketReports||[]).map(ticketReportSummary).sort((a,b)=>b.reportDate.localeCompare(a.reportDate)||b.asOfTime.localeCompare(a.asOfTime)||b.id-a.id)));
+  r.get('/ticket-reports/zapier/daily', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user?.userId) return res.status(401).json({error: 'Host user context is required'});
+    const date = zapierReportDate();
+    const report = (store.snapshot().ticketReports || []).filter(row => row.reportDate === date)
+      .sort((a, b) => b.asOfTime.localeCompare(a.asOfTime) || b.id - a.id)[0];
+    res.json(zapierReportPayload(report, date));
+  });
   r.get('/ticket-reports/:id',(req,res)=>{
     const id=Number(req.params.id);if(!Number.isSafeInteger(id)||id<1||id>2147483647)return res.status(400).json({error:'Invalid report ID'});
     const report=(store.snapshot().ticketReports||[]).find(report=>report.id===id);

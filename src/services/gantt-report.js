@@ -5,7 +5,6 @@ export const dateKey=value=>value?String(value).slice(0,10):'';
 export const dayIndex=value=>/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(value))?Math.floor(Date.parse(value+'T00:00:00Z')/86400000):null;
 export const dayKeyFromIndex=index=>new Date(index*86400000).toISOString().slice(0,10);
 const deploymentStatuses=['FOR TESTING (DL)','ONGOING TEST (DL)','DEV LIVE','READY','FOR DEPLOYMENT (DL)','FOR DEPLOYMENT (PL)','FOR MONITORING','PROD LIVE (HYPERCARE)'];
-export const deploymentLegend=[['testing','Testing'],['deployment','For deployment'],['monitoring','Monitoring'],['live','Prod live / Complete'],['missed','Missed deployment']];
 export function deploymentTaskAppearance(task,today=localDayKey(new Date())){
  const status=normalizeTaskStatus(task.status),target=dateKey(task.targetDeploymentDate);
  const missed=!!target&&validTargetDeploymentDate(target)&&target<today&&!isCompletedStatus(status);
@@ -41,16 +40,28 @@ export function buildGanttReport(tasks,timeline,{now=new Date(),includeComplete=
   return {task,start,target,end:target,issue,endLabel:'Target deployment'};
  }).sort((a,b)=>(a.start||'9999').localeCompare(b.start||'9999')||a.task.id-b.task.id)}));
 }
-export function timelinePosition(row,windowStart,days){
- const from=dayIndex(row.start),to=dayIndex(row.end),target=dayIndex(row.target);
- return {left:from==null?null:Math.max(0,(from-windowStart)/days*100),width:from==null||to==null||to<from||to<windowStart||from>=windowStart+days?0:Math.max(0,(Math.min(to+1,windowStart+days)-Math.max(from,windowStart))/days*100),target:target!=null&&target>=windowStart&&target<windowStart+days?(target-windowStart+.5)/days*100:null};
+function positionDeployment(start, target, windowStart, days, overdueThrough) {
+ const windowEnd = windowStart + days;
+ const percent = day => (day - windowStart) / days * 100;
+ const segment = (from, to) => {
+  const left = Math.max(from, windowStart);
+  const right = Math.min(to, windowEnd);
+  return right > left ? {left: percent(left), width: (right - left) / days * 100} : null;
+ };
+ const targetCenter = target == null ? null : target + 0.5;
+ const overdueEnd = dayIndex(overdueThrough);
+ return {
+  planned: start != null && targetCenter != null ? segment(start, targetCenter) : null,
+  overdue: targetCenter != null && overdueEnd != null && overdueEnd > target ? segment(targetCenter, overdueEnd + 0.5) : null,
+  target: targetCenter != null && target >= windowStart && target < windowEnd ? percent(targetCenter) : null
+ };
 }
-export function deploymentGroupPosition(group,windowStart,days){
- const starts=group.rows.filter(row=>!row.issue&&dayIndex(row.start)!=null).map(row=>dayIndex(row.start));
- const target=dayIndex(group.key),from=starts.length?Math.min(...starts):null;
- const right=target==null?null:target+.5;
- return {left:from==null?0:Math.max(0,(from-windowStart)/days*100),
-  width:from==null||right==null||right<from?0:Math.max(0,(Math.min(right,windowStart+days)-Math.max(from,windowStart))/days*100),
-  target:target!=null&&target>=windowStart&&target<windowStart+days?(target-windowStart+.5)/days*100:null,
-  outside:target==null?'':target<windowStart?'Target before displayed range':target>=windowStart+days?'Target after displayed range':''};
+export function timelinePosition(row, windowStart, days, overdueThrough) {
+ return positionDeployment(row.issue ? null : dayIndex(row.start), dayIndex(row.target), windowStart, days, overdueThrough);
+}
+
+export function deploymentGroupPosition(group, windowStart, days, overdueThrough) {
+ const starts = group.rows.filter(row => !row.issue).map(row => dayIndex(row.start)).filter(start => start != null);
+ const target = dayIndex(group.key);
+ return positionDeployment(starts.length ? Math.min(...starts) : null, target, windowStart, days, overdueThrough);
 }

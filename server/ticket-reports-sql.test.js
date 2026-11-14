@@ -4,12 +4,14 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { createSystemMonitoringRouter } from './index.js';
+import { zapierReportDate } from './zapier-report.js';
 test('SQL report router binds snapshot values and derives totals and actor on the server',async t=>{
   const statements=[];let inserted;
   const pool={request:()=>{const params={};return {input(name,type,value){params[name]=value;return this;},async query(text){
     statements.push({text,params});
     if(params.snapshot){inserted={id:1,snapshotJson:params.snapshot,actorId:params.actor,createdAt:new Date().toISOString()};return {recordset:[inserted]};}
     if(params.id)return{recordset:params.id===1?[inserted]:[]};
+    if(params.reportDate)return{recordset:[inserted]};
     return{recordset:[]};
   }};}};
   const app=express();app.use((req,res,next)=>{req.user={userId:'host-reporter'};next();});app.use(createSystemMonitoringRouter(()=>pool));
@@ -20,6 +22,12 @@ test('SQL report router binds snapshot values and derives totals and actor on th
   assert.equal(response.status,201);const report=await response.json();assert.equal(report.totals.total,1);assert.equal(report.actorId,'host-reporter');assert.equal(report.tickets[0].subject,subject);
   assert.ok(!statements[0].text.includes(subject));assert.equal(statements[0].params.total,1);assert.equal(statements[0].params.actor,'host-reporter');assert.ok(statements[0].params.snapshot.includes(subject));
   assert.equal((await fetch(base+'/ticket-reports/1')).status,200);assert.equal((await fetch(base+'/ticket-reports/2')).status,404);assert.equal((await fetch(base+'/ticket-reports/bad')).status,400);
+  const feedResponse=await fetch(base+'/ticket-reports/zapier/daily');
+  assert.equal(feedResponse.status,200);
+  const feed=await feedResponse.json(), feedQuery=statements.at(-1);
+  assert.equal(feed.report_id,1);
+  assert.equal(feedQuery.params.reportDate,zapierReportDate());
+  assert.match(feedQuery.text,/WHERE reportDate=@reportDate ORDER BY asOfTime DESC, id DESC/);
 });
 
 test('SQL workflow routes bind precise and compatibility statuses; read old rows canonically',async t=>{

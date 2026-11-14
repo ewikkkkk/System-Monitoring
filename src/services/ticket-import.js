@@ -1,5 +1,5 @@
 import { read, utils, SSF } from 'xlsx';
-import { normalizeReportInput } from '../../shared/ticket-report.js';
+import { normalizeReportInput, validWallTime } from '../../shared/ticket-report.js';
 
 export function readTicketWorkbook(buffer) {
   if (buffer.byteLength>10*1024*1024)throw new Error('Choose an Excel workbook of 10 MB or less.');
@@ -8,12 +8,12 @@ export function readTicketWorkbook(buffer) {
   return book;
 }
 const heading = value => String(value??'').trim().toLowerCase().replace(/\s+/g,' ');
-function dueDate(cell,date1904,ticketId){
+function ticketDate(cell,date1904,ticketId,label='Due by Time'){
   if(!cell||cell.v==null||cell.v==='')return null;
-  if(cell.f)throw new Error(`${ticketId}: due dates must be values, not formulas.`);
+  if(cell.f)throw new Error(`${ticketId}: ${label} must be a value, not a formula.`);
   let value=cell.v;
   if(typeof value==='number'){
-    const date=SSF.parse_date_code(value,{date1904});if(!date)throw new Error(`${ticketId}: invalid Excel due date.`);
+    const date=SSF.parse_date_code(value,{date1904});if(!date)throw new Error(`${ticketId}: invalid Excel ${label}.`);
     const pad=number=>String(number).padStart(2,'0');value=`${date.y}-${pad(date.m)}-${pad(date.d)}T${pad(date.H)}:${pad(date.M)}:${pad(Math.floor(date.S))}`;
   }else{
     value=String(value).trim().replace(' ','T');
@@ -22,14 +22,18 @@ function dueDate(cell,date1904,ticketId){
   }
   return value;
 }
-export function ticketsFromWorksheet(book,sheetName) {
+function readTicketRows(book,sheetName) {
   const sheet=book.Sheets[sheetName];if(!sheet||!sheet['!ref'])throw new Error('This worksheet is empty.');
   const range=utils.decode_range(sheet['!fullref']||sheet['!ref']);
   if(range.e.r>5020||range.e.c>199)throw new Error('Import at most 5,000 rows and 200 columns.');
   const rows=utils.sheet_to_json(sheet,{header:1,defval:'',raw:true,blankrows:true,range:{s:{r:0,c:0},e:range.e}});
   const headerIndex=rows.slice(0,20).findIndex(row=>row.some(value=>heading(value)==='ticket id')&&row.some(value=>heading(value)==='subject'));
   if(headerIndex<0)throw new Error('Missing Ticket ID and Subject headers in the first 20 rows.');
-  const headers=rows[headerIndex].map(heading),column=name=>headers.indexOf(name),id=column('ticket id'),subject=column('subject'),status=column('status'),assigned=column('assigned to'),agent=column('agent'),due=column('due by time');
+  return {sheet, rows, headerIndex, headers:rows[headerIndex].map(heading)};
+}
+export function ticketsFromWorksheet(book,sheetName) {
+  const {sheet, rows, headerIndex, headers}=readTicketRows(book,sheetName);
+  const column=name=>headers.indexOf(name),id=column('ticket id'),subject=column('subject'),status=column('status'),assigned=column('assigned to'),agent=column('agent'),due=column('due by time');
   if(status<0||(assigned<0&&agent<0))throw new Error('Required columns: Ticket ID, Subject, Status, and Assigned To or Agent.');
   const tickets=[];
   for(let r=headerIndex+1;r<rows.length;r++){
@@ -37,8 +41,55 @@ export function ticketsFromWorksheet(book,sheetName) {
     for(const c of [id,subject,status,assigned,agent,due].filter(c=>c>=0)){if(sheet[utils.encode_cell({r,c})]?.f)throw new Error(`Row ${r+1}: report columns must contain values, not formulas.`);}
     const ticketId=String(values[id]??'').trim();
     const assignee=String(assigned>=0?values[assigned]??'':'').trim()||String(agent>=0?values[agent]??'':'').trim()||'Unassigned';
-    tickets.push({ticketId,subject:String(values[subject]??''),status:String(values[status]??''),assignee,dueAt:dueDate(due>=0?sheet[utils.encode_cell({r,c:due})]:null,!!book.Workbook?.WBProps?.date1904,ticketId),url:''});
+    tickets.push({ticketId,subject:String(values[subject]??''),status:String(values[status]??''),assignee,dueAt:ticketDate(due>=0?sheet[utils.encode_cell({r,c:due})]:null,!!book.Workbook?.WBProps?.date1904,ticketId),url:''});
   }
   // Shared validation rejects incomplete rows and conflicting duplicate ticket IDs.
   return normalizeReportInput({reportDate:'2026-01-01',asOfTime:'00:00',timeZone:'UTC',sourceName:'validation.xlsx',sheetName,tickets}).tickets;
+}
+
+export function weeklyTicketsFromWorksheet(book, sheetName) {
+  const {sheet, rows, headerIndex, headers} = readTicketRows(book, sheetName);
+  const required = ['ticket id', 'subject', 'status', 'created time', 'resolved time', 'due by time'];
+  for (const name of required) {
+    if (headers.filter(header => header === name).length !== 1) {
+      throw new Error(`Weekly reports require exactly one ${name} column.`);
+    }
+  }
+
+  const date1904 = !!book.Workbook?.WBProps?.date1904;
+  const tickets = [];
+  for (let r = headerIndex + 1; r < rows.length; r++) {
+    if (rows[r].every(value => String(value ?? '').trim() === '')) continue;
+    const cell = name => {
+      const c = headers.indexOf(name);
+      if (c < 0) return;
+      const value = sheet[utils.encode_cell({r, c})];
+      if (value?.f) throw new Error(`Row ${r + 1}: ${name} must contain a value, not a formula.`);
+      return value;
+    };
+    const text = name => String(cell(name)?.v ?? '').trim();
+    const date = name => {
+      const value = ticketDate(cell(name), date1904, `Row ${r + 1}`, name);
+      if (value && !validWallTime(value)) throw new Error(`Row ${r + 1}: invalid ${name}.`);
+      return value;
+    };
+    const ticket = {
+      id: text('ticket id'), subject: text('subject'), status: text('status'),
+      createdAt: date('created time'), resolvedAt: date('resolved time'), dueAt: date('due by time'),
+      product: text('product'), category: text('category'), supportType: text('support type'),
+      group: text('group'), module: text('module'),
+    };
+    if (!ticket.id || !ticket.status || !ticket.createdAt) {
+      throw new Error(`Row ${r + 1}: Ticket ID, Status, and Created Time are required.`);
+    }
+    tickets.push(ticket);
+  }
+  if (!tickets.length || tickets.length > 5000) throw new Error('Import between 1 and 5,000 ticket rows.');
+  const ids = new Set();
+  for (const {id} of tickets) {
+    const key = id.toUpperCase();
+    if (ids.has(key)) throw new Error(`Duplicate ticket ID: ${id}.`);
+    ids.add(key);
+  }
+  return tickets;
 }
