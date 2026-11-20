@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowRight, Bug, Sparkles, AlertCircle, Clock3 } from 'lucide-react';
+import { ArrowRight, Bug, Sparkles, AlertCircle, CalendarDays, ChevronDown, CircleCheck } from 'lucide-react';
 import TaskIdentity, { StatusBadge } from '../components/TaskIdentity.jsx';
 import { formatDate } from '../task-utils.js';
 import { buildOverviewReport } from '../services/overview-report.js';
@@ -13,12 +13,61 @@ function ReportTable({ label, headings, children }) {
 }
 function Cell({ children, ...props }) { return <td className="sysmon-report-td" {...props}>{children}</td>; }
 
+function OverviewDetails({ title, children }) {
+  return <details className="sysmon-overview-details">
+    <summary className="sysmon-overview-disclosure">{title}<ChevronDown size={16} aria-hidden="true" /></summary>
+    <div className="sysmon-overview-details-content">{children}</div>
+  </details>;
+}
+
+function OverviewMetrics({ report }) {
+  const [enhancements, bugs] = report.types;
+  const metrics = [
+    { label: 'Pending bugs', value: bugs.active, icon: Bug },
+    { label: 'Pending enhancements', value: enhancements.active, icon: Sparkles },
+    { label: 'Completed', value: report.summary.completed, icon: CircleCheck, tone: 'complete' },
+    { label: 'Overdue deployments', value: report.overdue.length, icon: AlertCircle, tone: 'overdue' },
+  ];
+  return <dl className="sysmon-overview-metrics" aria-label="Task summary">
+    {metrics.map(({ label, value, icon: Icon, tone }) => <div className={tone ? `sysmon-overview-metric sysmon-overview-metric-${tone}` : 'sysmon-overview-metric'} key={label}>
+      <dt><Icon size={15} aria-hidden="true" />{label}</dt>
+      <dd>{value}</dd>
+    </div>)}
+  </dl>;
+}
+
 export default function OverviewView({ tasks, people, onEdit, onSelectStatus }) {
   const report = buildOverviewReport(tasks, people);
   const [showAllAttention, setShowAllAttention] = useState(false);
-  const attention = showAllAttention ? report.attention : report.attention.slice(0, 5);
+  const attention = showAllAttention ? report.attention : report.attention.slice(0, 3);
   return <div className="sysmon-overview-view sysmon-detailed-report">
-    <BugTrends tasks={tasks} onOpenTask={onEdit}/>
+    <OverviewMetrics report={report} />
+    <div className="sysmon-overview-focus">
+      <section className="sysmon-overview-queue" aria-labelledby="sysmon-overview-attention-title">
+        <h2 id="sysmon-overview-attention-title" className="sysmon-panel-title">Needs attention <span className="sysmon-count">{report.attention.length}</span></h2>
+        {attention.length ? attention.map(({task, reasons}) => <div className="sysmon-overview-queue-row" key={task.id}>
+          <TaskIdentity task={task} onEdit={onEdit} />
+          <div className="sysmon-attention-reasons">{reasons.map(reason => <span className="sysmon-attention-reason" key={reason}>{reason}</span>)}</div>
+        </div>) : <p className="sysmon-muted">No tasks need attention.</p>}
+        {report.attention.length > 3 && <button className="sysmon-button sysmon-overview-more" aria-expanded={showAllAttention} onClick={() => setShowAllAttention(!showAllAttention)}>
+          {showAllAttention ? 'Show fewer tasks' : `Show all ${report.attention.length} flagged tasks`}
+        </button>}
+      </section>
+      <section className="sysmon-overview-queue" aria-labelledby="sysmon-overview-deployment-title">
+        <h2 id="sysmon-overview-deployment-title" className="sysmon-panel-title"><CalendarDays size={16} aria-hidden="true" /> Upcoming deployments</h2>
+        <p className="sysmon-panel-description">Next 7 days</p>
+        {report.upcomingDeployments.length ? [...report.upcomingDeployments]
+          .sort((a, b) => String(a.targetDeploymentDate).localeCompare(String(b.targetDeploymentDate)))
+          .map(task => <div className="sysmon-overview-queue-row" key={task.id}>
+            <TaskIdentity task={task} onEdit={onEdit} />
+            <span className="sysmon-muted">{formatDate(task.targetDeploymentDate)}</span>
+          </div>) : <p className="sysmon-muted">No deployments scheduled.</p>}
+      </section>
+    </div>
+    <OverviewDetails title="Bug activity and resolutions">
+      <BugTrends tasks={tasks} onOpenTask={onEdit}/>
+    </OverviewDetails>
+    <OverviewDetails title="Delivery breakdown">
     <section className="sysmon-report-section">
       <div className="sysmon-report-heading"><div><h2 className="sysmon-panel-title">Enhancement & bug summary</h2><p className="sysmon-panel-description">Current filtered records · Completed means PROD LIVE (HYPERCARE) or COMPLETE · Rates use all matching tasks.</p></div><span className="sysmon-report-asof">As of {formatDate(new Date().toISOString())}</span></div>
       <ReportTable label="Enhancement and bug summary" headings={['Work type','Total','Active','In testing','Completed','Completion rate','Overdue','Active estimates']}>
@@ -39,13 +88,8 @@ export default function OverviewView({ tasks, people, onEdit, onSelectStatus }) 
       </ReportTable>
       <dl className="sysmon-readiness-list">{[['Overdue tasks',report.overdue.length],['Target deployment in the next 7 days',report.upcomingDeployments.length],['Missing developer',report.missingDeveloper],['Missing tester',report.missingTester],['Missing target deployment date',report.missingTargetDate],['Missing estimate',report.missingEstimate]].map(([label,count]) => <div className="sysmon-readiness-row" key={label}><dt>{label}</dt><dd className="sysmon-readiness-count">{count}</dd></div>)}</dl>
     </section>
-    <section className="sysmon-report-section"><h2 className="sysmon-panel-title"><AlertCircle size={16} /> Needs attention <span className="sysmon-count">{report.attention.length}</span></h2><p className="sysmon-panel-description">Overdue work first, followed by tasks with more priority or planning flags. Select any task for details.</p>
-      {attention.length ? attention.map(({task,reasons}) => <div className="sysmon-report-task-row" key={task.id}><TaskIdentity task={task} onEdit={onEdit} /><div className="sysmon-attention-reasons">{reasons.map(reason => <span className="sysmon-attention-reason" key={reason}>{reason}</span>)}</div><span className="sysmon-muted">Target {formatDate(task.targetDeploymentDate)}</span></div>) : <p className="sysmon-muted">No priority or planning flags in this task set.</p>}
-      {report.attention.length > 5 && <button className="sysmon-button" onClick={() => setShowAllAttention(!showAllAttention)}>{showAllAttention ? 'Show fewer tasks' : 'Show all ' + report.attention.length + ' flagged tasks'}</button>}
-    </section>
-    <section className="sysmon-report-section"><h2 className="sysmon-panel-title"><Clock3 size={16} /> Upcoming deployments <span className="sysmon-count">{report.upcomingDeployments.length}</span></h2><p className="sysmon-panel-description">Active tasks targeted for deployment today through the next 7 days.</p>
-      {report.upcomingDeployments.length ? [...report.upcomingDeployments].sort((a,b) => String(a.targetDeploymentDate).localeCompare(String(b.targetDeploymentDate))).map(task => <div className="sysmon-report-task-row" key={task.id}><TaskIdentity task={task} onEdit={onEdit} /><StatusBadge status={task.status} /><span>{formatDate(task.targetDeploymentDate)}</span></div>) : <p className="sysmon-muted">No active tasks with target deployment dates in this window.</p>}
-    </section>
+    </OverviewDetails>
+    <OverviewDetails title="Team and systems">
     <section className="sysmon-report-section"><h2 className="sysmon-panel-title">Team workload & ownership</h2><p className="sysmon-panel-description">Active work only. Unique assigned tasks and hours count a person once per task, even when assigned as both developer and tester. Team hours may overlap across people.</p>
       <ReportTable label="Team workload report" headings={['Team member','Developer tasks','Tester tasks','Unique active tasks','Overdue','Planned hours']}>
         {report.workload.length ? report.workload.map(row => <tr key={row.userId}><th className="sysmon-report-th sysmon-report-row-heading" scope="row">{row.displayName}<span className="sysmon-workload-role">{row.assignmentRole}</span></th><Cell>{row.developer}</Cell><Cell>{row.tester}</Cell><Cell>{row.active}</Cell><Cell>{row.overdue}</Cell><Cell>{hours(row.hours)}</Cell></tr>) : <tr><td className="sysmon-report-td" colSpan={6}>No assignment directory available.</td></tr>}
@@ -56,8 +100,11 @@ export default function OverviewView({ tasks, people, onEdit, onSelectStatus }) 
         {report.systems.length ? report.systems.map(row => <tr key={row.system}><th className="sysmon-report-th sysmon-report-row-heading" scope="row">{row.system}</th><Cell>{row.enhancement}</Cell><Cell>{row.bug}</Cell><Cell>{row.active}</Cell><Cell>{row.completed}</Cell><Cell>{row.overdue}</Cell></tr>) : <tr><td className="sysmon-report-td" colSpan={6}>No matching tasks.</td></tr>}
       </ReportTable>
     </section>
-    <section className="sysmon-report-section"><h2 className="sysmon-panel-title">Recently updated</h2><p className="sysmon-panel-description">Five latest updates from the current filtered task set.</p>
+    </OverviewDetails>
+    <OverviewDetails title="Recently updated">
+    <section className="sysmon-report-section">
       {report.recent.length ? report.recent.map(task => <div className="sysmon-report-task-row" key={task.id}><TaskIdentity task={task} onEdit={onEdit} /><StatusBadge status={task.status} /><span className="sysmon-muted">{formatDate(task.updatedAt)}</span></div>) : <p className="sysmon-muted">No tasks match these filters.</p>}
     </section>
+    </OverviewDetails>
   </div>;
 }

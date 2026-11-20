@@ -254,6 +254,40 @@
 .sysmon-report-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap}
 .sysmon-report-asof,.sysmon-report-note{color:var(--sm-muted);font-size:11px;line-height:1.7}
 .sysmon-detailed-report .sysmon-panel-title{display:flex;align-items:center;gap:8px}
+.sysmon-overview-view.sysmon-detailed-report{padding-block:18px}
+.sysmon-overview-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:0;border:1px solid var(--sm-border);border-radius:var(--sm-radius);background:var(--sm-raised);overflow:hidden}
+.sysmon-overview-metric{min-width:0;padding:16px 18px;border-inline-end:1px solid var(--sm-border)}
+.sysmon-overview-metric:last-child{border-inline-end:0}
+.sysmon-overview-metric dt{display:flex;align-items:center;gap:7px;color:var(--sm-muted);font-size:12px}
+.sysmon-overview-metric dt svg{flex:none;color:var(--sm-accent)}
+.sysmon-overview-metric-complete dt svg{color:var(--sm-green)}
+.sysmon-overview-metric-overdue dt svg{color:var(--sm-red)}
+.sysmon-overview-metric dd{margin:5px 0 0;font-size:28px;line-height:1.2;letter-spacing:-.04em;font-weight:650;font-variant-numeric:tabular-nums}
+.sysmon-overview-focus{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:28px;margin:24px 0}
+.sysmon-overview-queue{min-width:0}
+.sysmon-overview-queue .sysmon-panel-title{margin:0 0 10px}
+.sysmon-overview-queue-row{display:grid;gap:6px;padding:10px 0;border-top:1px solid var(--sm-border);overflow-wrap:anywhere}
+.sysmon-overview-more{margin-top:8px}
+.sysmon-overview-details{border-top:1px solid var(--sm-border)}
+.sysmon-overview-details:last-child{border-bottom:1px solid var(--sm-border)}
+.sysmon-overview-disclosure{display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:46px;padding:0 6px;cursor:pointer;font-weight:600;list-style:none}
+.sysmon-overview-disclosure::-webkit-details-marker{display:none}
+.sysmon-overview-disclosure:hover{color:var(--sm-accent)}
+.sysmon-overview-disclosure:focus-visible{outline:2px solid var(--sm-accent);outline-offset:-2px}
+.sysmon-overview-disclosure svg{flex:none;color:var(--sm-muted)}
+.sysmon-overview-details[open]>.sysmon-overview-disclosure svg{transform:rotate(180deg)}
+.sysmon-overview-details-content>.sysmon-report-section:first-child{padding-top:8px}
+.sysmon-overview-details-content>.sysmon-report-section:last-child{border-bottom:0}
+@container(max-width:680px){
+ .sysmon-overview-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .sysmon-overview-metric:nth-child(2){border-inline-end:0}
+ .sysmon-overview-metric:nth-child(-n+2){border-bottom:1px solid var(--sm-border)}
+ .sysmon-overview-focus{grid-template-columns:minmax(0,1fr);gap:22px}
+}
+@container(max-width:380px){
+ .sysmon-overview-metric{padding:12px}
+ .sysmon-overview-metric dt{font-size:11px;align-items:flex-start}
+}
 .sysmon-report-table{width:100%;border-collapse:collapse;table-layout:auto;font-size:12px}
 .sysmon-report-th{font-size:11px;color:var(--sm-muted);text-align:right;font-weight:500;padding:12px 10px;border-bottom:1px solid var(--sm-border);white-space:nowrap}
 .sysmon-report-th:first-child{text-align:left;padding-left:0}

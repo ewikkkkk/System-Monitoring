@@ -44,7 +44,7 @@ export function getReportTicketUrl(reference,template=getReportTicketLinkTemplat
 }
 // Add newly configured links to old report presentation/copy without rewriting saved snapshots.
 export function withReportTicketLinks(report) {
-  if(!report.tickets.some(ticket=>!ticket.url))return report;
+  if(report.notes && !report.tickets.some(ticket=>!ticket.url))return report;
   return {...report,...buildTicketReport({...report,tickets:report.tickets.map(ticket=>({...ticket,url:ticket.url||getReportTicketUrl(ticket.ticketId)}))})};
 }
 export const getPeople = () => request('/people');

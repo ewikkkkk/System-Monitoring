@@ -35,7 +35,12 @@ export function normalizeReportInput(body) {
   });
   return {reportDate:body.reportDate,asOfTime:body.asOfTime,timeZone:body.timeZone,sourceName:clean(body.sourceName),sheetName:clean(body.sheetName),tickets};
 }
-const dateLabel = value => new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'}).format(new Date(`${value.slice(0,10)}T00:00:00Z`));
+export const ticketDueDateLabel = value => value
+  ? new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'}).format(new Date(`${value.slice(0,10)}T00:00:00Z`))
+  : 'Not supplied';
+const statusHeadings = new Map([['Open','OPEN TICKETS'], ['Pending','PENDING TICKETS'], ['Internal Ticket','INTERNAL TICKETS']]);
+export const ticketStatusHeading = status => statusHeadings.get(status) || status.toUpperCase();
+export const pendingTicketNote = 'Pending tickets are excluded from overdue calculations under the specified monitoring rules.';
 export const reportDateLabel = value => new Intl.DateTimeFormat('en-US',{month:'long',day:'numeric',year:'numeric',timeZone:'UTC'}).format(new Date(`${value}T00:00:00Z`));
 const escapeHtml = value => String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 export function buildTicketReport(body) {
@@ -47,23 +52,22 @@ export function buildTicketReport(body) {
   const groups=statusOrder.map(status=>({status,count:counts[status]||0,assignees:[...new Set(unfinished.filter(row=>row.status===status).map(row=>row.assignee))].sort((a,b)=>a.localeCompare(b)).map(assignee=>({assignee,tickets:unfinished.filter(row=>row.status===status&&row.assignee===assignee).sort((a,b)=>b.ticketId.localeCompare(a.ticketId,undefined,{numeric:true}))}))}));
   const time=new Intl.DateTimeFormat('en-US',{hour:'numeric',minute:'2-digit',hour12:true,timeZone:'UTC'}).format(new Date(`${asOf}Z`));
   const subtitle=`As of ${reportDateLabel(input.reportDate)} | ${time}`;
-  const summary=`Total imported: ${totals.total} | Unfinished: ${totals.unfinished} | Resolved: ${totals.resolved} | Closed: ${totals.closed} | Overdue: ${totals.overdue}`;
-  const text=['DAILY TICKET MONITORING REPORT',subtitle,`Time zone: ${input.timeZone}`,summary],html=['<h2>DAILY TICKET MONITORING REPORT</h2>',`<p>${escapeHtml(subtitle)}<br>Time zone: ${escapeHtml(input.timeZone)}</p>`,`<p>${escapeHtml(summary)}</p>`];
+  const text=['DAILY TICKET MONITORING REPORT',subtitle],html=['<h2>DAILY TICKET MONITORING REPORT</h2>',`<p>${escapeHtml(subtitle)}</p>`];
   for(const group of groups){
-    const heading=(new Map([['Open','OPEN TICKETS'],['Pending','PENDING TICKETS'],['Internal Ticket','INTERNAL TICKETS']]).get(group.status)||group.status.toUpperCase())+` (${group.count})`;
+    const heading=`${ticketStatusHeading(group.status)} (${group.count})`;
     text.push('',heading);html.push(`<h3>${escapeHtml(heading)}</h3>`);
     if(!group.count){text.push('None');html.push('<p>None</p>');}
     for(const person of group.assignees){text.push(person.assignee);html.push(`<p><strong>${escapeHtml(person.assignee)}</strong></p><ul>`);
-      for(const row of person.tickets){const due=group.status==='Internal Ticket'?'':` | Due: ${row.dueAt?dateLabel(row.dueAt):'Not supplied'}`;
+      for(const row of person.tickets){const due=group.status==='Internal Ticket'?'':` | Due: ${ticketDueDateLabel(row.dueAt)}`;
         text.push(`- ${row.ticketId}${row.url?` (${row.url})`:''} – ${row.subject}${due}`);
         html.push(`<li>${row.url?`<a href="${escapeHtml(row.url)}">${escapeHtml(row.ticketId)}</a>`:escapeHtml(row.ticketId)} – ${escapeHtml(row.subject+due)}</li>`);
       }html.push('</ul>');
     }
-    if(group.status==='Pending'){const note='Pending tickets are excluded from overdue calculations under the specified monitoring rules.';text.push(note);html.push(`<p>${note}</p>`);}
+    if(group.status==='Pending'){text.push(pendingTicketNote);html.push(`<p>${pendingTicketNote}</p>`);}
   }
   const notes=[`Source: ${input.sourceName} / ${input.sheetName}.`,`Statuses are a snapshot of the imported export; changing the report date does not reconstruct historical statuses.`,`Overdue uses Due by Time before the as-of time for Open and Waiting on Customer only. Internal tickets are excluded.`,`Ticket dates are interpreted as wall-clock times in ${input.timeZone}.`,...(unfinished.some(row=>!row.url)?['Some ticket links are not configured; ticket numbers are shown as text.']:[])];
   text.push('',...notes);html.push(...notes.map(note=>`<p>${escapeHtml(note)}</p>`));
-  return {...input,version:ticketReportVersion,totals,counts,groups,text:text.join('\n'),html:html.join('\n')};
+  return {...input,version:ticketReportVersion,totals,counts,groups,notes,text:text.join('\n'),html:html.join('\n')};
 }
 // One data point per saved day; latest as-of time wins, then latest saved revision.
 export function dailyTicketTotals(reports) {

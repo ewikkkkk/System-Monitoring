@@ -2,29 +2,27 @@ import React, { useEffect, useRef, useState } from 'react';
 import { FileSpreadsheet, RefreshCw, Copy, Save, FileText, History, Link2, Send } from 'lucide-react';
 import TeamsSendModal from '../components/TeamsSendModal.jsx';
 import { getTicketReports, getTicketReport, saveTicketReport, getReportTicketUrl, getReportTicketLinkTemplate } from '../services/api.js';
-import { buildTicketReport, dailyTicketTotals } from '../../shared/ticket-report.js';
+import { buildTicketReport, dailyTicketTotals, pendingTicketNote, ticketDueDateLabel, ticketStatusHeading } from '../../shared/ticket-report.js';
 
 const localDate = date => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
 const initialOptions = () => ({reportDate:localDate(new Date()),asOfTime:new Date().toTimeString().slice(0,5),timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,linkTemplate:getReportTicketLinkTemplate()});
-const statusHeading = status => new Map([['Open','Open tickets'],['Pending','Pending tickets'],['Internal Ticket','Internal tickets']]).get(status)||status;
 
 function ReportPreview({report}) {
   return <article className="sysmon-ticket-report" aria-label="Generated daily ticket report">
     <h2 className="sysmon-panel-title">DAILY TICKET MONITORING REPORT</h2>
-    <p className="sysmon-panel-description">{report.text.split('\n')[1]} · {report.timeZone}</p>
-    <p className="sysmon-report-note">Total imported {report.totals.total} · Unfinished {report.totals.unfinished} · Resolved {report.totals.resolved} · Closed {report.totals.closed} · Overdue {report.totals.overdue}</p>
+    <p className="sysmon-panel-description">{report.text.split('\n')[1]}</p>
     {report.groups.map(group=><section className="sysmon-ticket-status-section" key={group.status}>
-      <h3 className="sysmon-ticket-status-title">{statusHeading(group.status)} <span className="sysmon-count">{group.count}</span></h3>
+      <h3 className="sysmon-ticket-status-title">{ticketStatusHeading(group.status)} ({group.count})</h3>
       {!group.count&&<p className="sysmon-muted">None</p>}
       {group.assignees.map(person=><div className="sysmon-ticket-assignee" key={person.assignee}>
         <h4 className="sysmon-ticket-assignee-title">{person.assignee}</h4><ul className="sysmon-ticket-lines">{person.tickets.map(ticket=><li className="sysmon-ticket-line" key={ticket.ticketId}>
           {ticket.url?<a className="sysmon-ticket-link" href={ticket.url} target="_blank" rel="noopener noreferrer">{ticket.ticketId}</a>:<strong className="sysmon-ticket-number">{ticket.ticketId}</strong>} – {ticket.subject}
-          {ticket.status!=='Internal Ticket'&&<span className="sysmon-muted"> | Due: {ticket.dueAt?new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'}).format(new Date(`${ticket.dueAt.slice(0,10)}T00:00:00Z`)):'Not supplied'}</span>}
+          {ticket.status!=='Internal Ticket'&&<span className="sysmon-muted"> | Due: {ticketDueDateLabel(ticket.dueAt)}</span>}
         </li>)}</ul>
       </div>)}
-      {group.status==='Pending'&&<p className="sysmon-report-note">Pending tickets are excluded from overdue calculations under the specified monitoring rules.</p>}
+      {group.status==='Pending'&&<p className="sysmon-report-note">{pendingTicketNote}</p>}
     </section>)}
-    <p className="sysmon-report-note">Source: {report.sourceName} / {report.sheetName}. Statuses reflect the imported export. Changing the report date does not reconstruct past statuses. Overdue uses Due by Time for Open and Waiting on Customer only, interpreted in {report.timeZone}.</p>
+    {report.notes?.map(note => <p key={note} className="sysmon-report-note">{note}</p>)}
   </article>;
 }
 

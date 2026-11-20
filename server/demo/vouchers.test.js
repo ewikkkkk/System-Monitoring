@@ -21,6 +21,8 @@ test('voucher inventory persists location tags, usage, mismatch findings and hos
     const response = await request('/vouchers', { code, location, status: 'Used', createdBy: 'forged' });
     assert.equal(response.status, 201); return (await response.json()).id;
   };
+  const maguyam = await create('DEMO-MAGUYAM', 'Maguyam');
+  assert.ok(Number.isSafeInteger(maguyam));
   assert.equal((await request('/vouchers', { code: 'DEMO-INVALID' })).status, 400);
   assert.equal((await request('/vouchers', { code: 'DEMO-INVALID', location: 'Elsewhere' })).status, 400);
   const first = await create('00123-DEMO');

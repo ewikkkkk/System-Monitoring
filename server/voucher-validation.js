@@ -1,4 +1,4 @@
-export const voucherLocations = ['Bancal 1', 'Bancal 2'];
+export const voucherLocations = ['Bancal 1', 'Bancal 2', 'Maguyam'];
 const text = (value, max, required = false) => typeof value === 'string' && value.length <= max && (!required || value.trim().length > 0);
 
 export function validVoucher(body) {
